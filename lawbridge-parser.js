@@ -11,8 +11,6 @@ class LawBridgeParser {
     this.refreshStart = null;
     this.refreshEnd = null;
     this.refreshBuffer = [];
-    this.currentParagraph = ''; // Accumulate text until new paragraph
-    this.lastFormatChange = false; // Track when format changes to start new paragraph
   }
 
   // Format type descriptions
@@ -69,11 +67,10 @@ class LawBridgeParser {
       if (stxIndex === -1) {
         if (this.buffer.length > 0) {
           const text = this.buffer.toString('ascii');
-          this.currentParagraph += text; // Accumulate text
 
-          // If in refresh mode, also buffer this text
-          if (this.refreshMode) {
-            this.refreshBuffer.push({
+          // Emit text immediately instead of accumulating
+          if (text.trim()) {
+            const textData = {
               type: 'text',
               content: text,
               page: this.currentPage,
@@ -81,7 +78,14 @@ class LawBridgeParser {
               format: this.currentFormat,
               formatDescription: this.getFormatDescription(this.currentFormat),
               timecode: this.currentTimecode
-            });
+            };
+
+            results.push(textData);
+
+            // If in refresh mode, also buffer this text
+            if (this.refreshMode) {
+              this.refreshBuffer.push({...textData});
+            }
           }
 
           this.buffer = Buffer.alloc(0);
@@ -92,11 +96,10 @@ class LawBridgeParser {
       // Process any text before the command
       if (stxIndex > 0) {
         const text = this.buffer.slice(0, stxIndex).toString('ascii');
-        this.currentParagraph += text; // Accumulate text
 
-        // If in refresh mode, also buffer this text
-        if (this.refreshMode) {
-          this.refreshBuffer.push({
+        // Emit text immediately instead of accumulating
+        if (text.trim()) {
+          const textData = {
             type: 'text',
             content: text,
             page: this.currentPage,
@@ -104,7 +107,14 @@ class LawBridgeParser {
             format: this.currentFormat,
             formatDescription: this.getFormatDescription(this.currentFormat),
             timecode: this.currentTimecode
-          });
+          };
+
+          results.push(textData);
+
+          // If in refresh mode, also buffer this text
+          if (this.refreshMode) {
+            this.refreshBuffer.push({...textData});
+          }
         }
 
         this.buffer = this.buffer.slice(stxIndex);
@@ -145,28 +155,7 @@ class LawBridgeParser {
           if (this.buffer[3] === this.ETX) {
             const format = this.buffer[2];
 
-            // Emit accumulated paragraph before format change
-            if (this.currentParagraph.trim()) {
-              const textData = {
-                type: 'text',
-                content: this.currentParagraph.trim(),
-                page: this.currentPage,
-                line: this.currentLine,
-                format: this.currentFormat,
-                formatDescription: this.getFormatDescription(this.currentFormat),
-                timecode: this.currentTimecode
-              };
-
-              results.push(textData);
-
-              // If in refresh mode, also buffer this text
-              if (this.refreshMode) {
-                this.refreshBuffer.push({...textData});
-              }
-
-              this.currentParagraph = ''; // Reset paragraph
-            }
-
+            // Just update the current format - no paragraph accumulation needed
             this.currentFormat = format;
             commandData = {
               format: format,
@@ -271,28 +260,6 @@ class LawBridgeParser {
       this.buffer = this.buffer.slice(commandLength);
     }
 
-    // Emit any remaining accumulated text at the end
-    if (this.currentParagraph.trim()) {
-      const textData = {
-        type: 'text',
-        content: this.currentParagraph.trim(),
-        page: this.currentPage,
-        line: this.currentLine,
-        format: this.currentFormat,
-        formatDescription: this.getFormatDescription(this.currentFormat),
-        timecode: this.currentTimecode
-      };
-
-      results.push(textData);
-
-      // If in refresh mode, also buffer this text
-      if (this.refreshMode) {
-        this.refreshBuffer.push({...textData});
-      }
-
-      this.currentParagraph = ''; // Reset paragraph
-    }
-
     return results;
   }
 
@@ -307,8 +274,6 @@ class LawBridgeParser {
     this.refreshStart = null;
     this.refreshEnd = null;
     this.refreshBuffer = [];
-    this.currentParagraph = '';
-    this.lastFormatChange = false;
   }
 
   // Get current state
