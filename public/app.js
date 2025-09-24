@@ -30,8 +30,10 @@ class BridgeViewer {
             text: '#333333',
             currentWord: '#ffeb3b'
         };
+        this.speakerLabelColor = '#ff6b6b'; // Single color for all speaker labels
 
         this.initializeUI();
+        this.loadSpeakerColors(); // Load saved speaker colors
         this.connectWebSocket();
     }
 
@@ -61,6 +63,9 @@ class BridgeViewer {
             textColor: document.getElementById('textColor'),
             currentWordColor: document.getElementById('currentWordColor'),
             resetColorsBtn: document.getElementById('resetColorsBtn'),
+            // Speaker color elements
+            speakerLabelColor: document.getElementById('speakerLabelColor'),
+            speakerPreview: document.getElementById('speakerPreview'),
             currentPage: document.getElementById('currentPage'),
             currentLine: document.getElementById('currentLine'),
             currentFormat: document.getElementById('currentFormat'),
@@ -100,6 +105,9 @@ class BridgeViewer {
         this.elements.textColor.addEventListener('input', () => this.updateColors());
         this.elements.currentWordColor.addEventListener('input', () => this.updateColors());
         this.elements.resetColorsBtn.addEventListener('click', () => this.resetColors());
+
+        // Speaker color management
+        this.elements.speakerLabelColor.addEventListener('input', () => this.updateSpeakerLabelColor());
 
         // Search and filters
         this.elements.searchBtn.addEventListener('click', () => this.performSearch());
@@ -243,6 +251,8 @@ class BridgeViewer {
             tempItem.remove();
         }
 
+        // Speaker detection is not needed - we apply one color to all speaker labels
+
         // Apply filters to the accumulated text - preserve exact formatting including line breaks
         const textData = {
             type: 'text',
@@ -333,31 +343,53 @@ class BridgeViewer {
                   .replace(/&lt;br&gt;/g, '<br>'); // Keep <br> tags
     }
 
+    escapeHtmlButKeepBrAndSpans(text) {
+        // Escape HTML but keep <br> tags and speaker label spans
+        return text.replace(/</g, '&lt;')
+                  .replace(/>/g, '&gt;')
+                  .replace(/&lt;br&gt;/g, '<br>') // Keep <br> tags
+                  .replace(/&lt;span class="speaker-label" style="[^"]*"&gt;/g, (match) => {
+                      // Properly restore speaker label spans with their style attributes
+                      return match.replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+                  })
+                  .replace(/&lt;\/span&gt;/g, '</span>'); // Keep closing spans
+    }
+
     wrapTextWithWordSpans(text) {
         if (!text) return '';
 
-        // First escape HTML but keep <br> tags
-        const escapedText = this.escapeHtmlButKeepBr(text);
+        // First apply speaker colors
+        const coloredText = this.applySpeakerColors(text);
 
-        // Split text into words and whitespace, preserving <br> tags
-        const parts = escapedText.split(/(\s+|<br>)/);
+        // Split on speaker spans to handle them separately
+        const speakerSpanRegex = /(<span class="speaker-label" style="[^"]*">[^<]*<\/span>)/;
+        const parts = coloredText.split(speakerSpanRegex);
+
         let html = '';
         let wordIndex = 0;
 
-        parts.forEach((part, index) => {
-            if (part === '<br>') {
-                // Preserve line breaks
-                html += '<br>';
-            } else if (part.trim() && part !== '<br>') {
-                // This is a word (not whitespace or line break)
-                const isCurrentWord = this.isCurrentWord(wordIndex, text);
-                const wordId = `word-${Date.now()}-${wordIndex}`;
-                const cssClass = isCurrentWord ? 'word current-word-cursor' : 'word';
-                html += `<span class="${cssClass}" data-word-id="${wordId}">${part}</span>`;
-                wordIndex++;
-            } else {
-                // This is whitespace, preserve it
+        parts.forEach(part => {
+            if (speakerSpanRegex.test(part)) {
+                // This is a speaker span - keep it as-is
                 html += part;
+            } else if (part) {
+                // This is regular text - preserve <br> tags before escaping HTML
+                const textParts = part.split(/(\s+|<br>)/);
+
+                textParts.forEach(textPart => {
+                    if (textPart === '<br>') {
+                        html += '<br>';
+                    } else if (textPart.trim() && textPart !== '<br>') {
+                        const isCurrentWord = this.isCurrentWord(wordIndex, text);
+                        const wordId = `word-${Date.now()}-${wordIndex}`;
+                        const cssClass = isCurrentWord ? 'word current-word-cursor' : 'word';
+                        html += `<span class="${cssClass}" data-word-id="${wordId}">${this.escapeHtml(textPart)}</span>`;
+                        wordIndex++;
+                    } else {
+                        // This is whitespace, escape it but preserve it
+                        html += this.escapeHtml(textPart);
+                    }
+                });
             }
         });
 
@@ -408,8 +440,8 @@ class BridgeViewer {
         // Line number command indicates a new line in Eclipse
         // This is where Eclipse actually breaks lines, not on CR/LF characters
 
+        // Only add line break if we have some content, otherwise it creates empty lines
         if (this.textAccumulator.trim()) {
-            // Add a line break to current accumulated text
             this.textAccumulator += '<br>';
             this.updateRealTimeDisplay();
         }
@@ -488,7 +520,9 @@ class BridgeViewer {
 
         // Process text content for word-level tracking
         if (data.content) {
-            content.innerHTML = this.processTextWithWordTracking(data.content, this.searchTerm);
+            // Apply speaker colors first, then word tracking
+            const coloredContent = this.applySpeakerColors(data.content);
+            content.innerHTML = this.processTextWithWordTracking(coloredContent, this.searchTerm);
         }
 
         item.appendChild(meta);
@@ -516,33 +550,42 @@ class BridgeViewer {
     processTextWithWordTracking(text, searchTerm) {
         if (!text) return '';
 
-        // Note: Line breaks are already converted to <br> tags in real-time processing
-        // So we don't need to convert \r\n, \r, \n here - just process the existing <br> tags
+        // Split on speaker spans to handle them separately (similar to wrapTextWithWordSpans)
+        const speakerSpanRegex = /(<span class="speaker-label" style="[^"]*">[^<]*<\/span>)/;
+        const parts = text.split(speakerSpanRegex);
 
-        // Split text into words while preserving whitespace and line breaks
-        const parts = text.split(/(\s+|<br>)/);
         let html = '';
 
-        parts.forEach((part, index) => {
-            if (part === '<br>') {
-                // Preserve line breaks exactly as they were positioned in Eclipse
-                html += '<br>';
-            } else if (part.trim() && part !== '<br>') {
-                // This is a word (not whitespace or line break)
-                const wordId = `word-${Date.now()}-${index}`;
-                let wordHtml = `<span class="word" data-word-id="${wordId}">${this.escapeHtml(part)}</span>`;
+        parts.forEach((part, partIndex) => {
+            if (speakerSpanRegex.test(part)) {
+                // This is a speaker span - keep it as-is
+                html += part;
+            } else if (part) {
+                // This is regular text - process it for word tracking
+                const textParts = part.split(/(\s+|<br>)/);
 
-                // Apply search highlighting if needed
-                if (searchTerm && part.toLowerCase().includes(searchTerm.toLowerCase())) {
-                    wordHtml = this.highlightSearch(wordHtml, searchTerm);
-                }
+                textParts.forEach((textPart, index) => {
+                    if (textPart === '<br>') {
+                        // Preserve line breaks exactly as they were positioned in Eclipse
+                        html += '<br>';
+                    } else if (textPart.trim() && textPart !== '<br>') {
+                        // This is a word (not whitespace or line break)
+                        const wordId = `word-${Date.now()}-${partIndex}-${index}`;
+                        let wordHtml = `<span class="word" data-word-id="${wordId}">${this.escapeHtml(textPart)}</span>`;
 
-                html += wordHtml;
-            } else {
-                // This is whitespace, preserve it exactly as it appears in Eclipse
-                if (part !== '<br>') {
-                    html += this.escapeHtml(part);
-                }
+                        // Apply search highlighting if needed
+                        if (searchTerm && textPart.toLowerCase().includes(searchTerm.toLowerCase())) {
+                            wordHtml = this.highlightSearch(wordHtml, searchTerm);
+                        }
+
+                        html += wordHtml;
+                    } else {
+                        // This is whitespace, preserve it exactly as it appears in Eclipse
+                        if (textPart !== '<br>') {
+                            html += this.escapeHtml(textPart);
+                        }
+                    }
+                });
             }
         });
 
@@ -1060,6 +1103,79 @@ class BridgeViewer {
             }
             return 0;
         });
+    }
+
+    // Speaker Label Color Management
+    updateSpeakerLabelColor() {
+        this.speakerLabelColor = this.elements.speakerLabelColor.value;
+        this.updateSpeakerPreview();
+        this.saveSpeakerLabelColor();
+        this.updateExistingSpeakerLabels();
+    }
+
+    updateSpeakerPreview() {
+        const previews = this.elements.speakerPreview.querySelectorAll('.speaker-label-preview');
+        const contrastColor = this.getContrastColor(this.speakerLabelColor);
+
+        previews.forEach(preview => {
+            preview.style.backgroundColor = this.speakerLabelColor;
+            preview.style.color = contrastColor;
+        });
+    }
+
+    updateExistingSpeakerLabels() {
+        // Update all existing speaker labels in the transcript with the new color
+        const speakerLabels = this.elements.transcript.querySelectorAll('.speaker-label');
+        const contrastColor = this.getContrastColor(this.speakerLabelColor);
+
+        speakerLabels.forEach(label => {
+            label.style.backgroundColor = this.speakerLabelColor;
+            label.style.color = contrastColor;
+        });
+    }
+
+    getContrastColor(hexColor) {
+        // Convert hex to RGB
+        const r = parseInt(hexColor.substr(1, 2), 16);
+        const g = parseInt(hexColor.substr(3, 2), 16);
+        const b = parseInt(hexColor.substr(5, 2), 16);
+
+        // Calculate luminance
+        const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+        // Return black or white based on luminance
+        return luminance > 0.5 ? '#000000' : '#ffffff';
+    }
+
+    applySpeakerColors(text) {
+        // Apply single color to all speaker labels
+        const speakerPatterns = [
+            /\b(SP\d{2})\b/gi,           // SP01, SP02, etc.
+            /\b([A-Z][a-z]+ [A-Z][a-z]+)\b/g, // First Last (proper names)
+            /\b(JUDGE|ATTORNEY|COUNSEL|WITNESS|COURT|CLERK)\b/g // Specific legal role names
+        ];
+
+        let coloredText = text;
+        const contrastColor = this.getContrastColor(this.speakerLabelColor);
+
+        for (const pattern of speakerPatterns) {
+            coloredText = coloredText.replace(pattern, `<span class="speaker-label" style="background-color: ${this.speakerLabelColor}; color: ${contrastColor}">$1</span>`);
+        }
+
+        return coloredText;
+    }
+
+    saveSpeakerLabelColor() {
+        localStorage.setItem('bridgeViewer_speakerLabelColor', this.speakerLabelColor);
+    }
+
+    loadSpeakerColors() {
+        const saved = localStorage.getItem('bridgeViewer_speakerLabelColor');
+        if (saved) {
+            this.speakerLabelColor = saved;
+            this.elements.speakerLabelColor.value = saved;
+            this.updateSpeakerPreview();
+        }
     }
 }
 
