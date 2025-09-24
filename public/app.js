@@ -578,18 +578,48 @@ class BridgeViewer {
     }
 
     handleRefreshStart(refreshData) {
+        console.log('=== REFRESH START ===');
         console.log('Refresh started:', refreshData.data.startTimecodeString, 'to', refreshData.data.endTimecodeString);
+        console.log('Refresh timecode data:', {
+            start: refreshData.data.startTimecode,
+            end: refreshData.data.endTimecode,
+            startSeconds: this.timecodeToSeconds(refreshData.data.startTimecode),
+            endSeconds: this.timecodeToSeconds(refreshData.data.endTimecode)
+        });
 
-        // Find and remove items within the refresh timecode range from both display and data
-        // This is a simplified approach - in a full implementation you'd need to match exact timecodes
-        // For now, we'll mark that a refresh is in progress
+        // Log current transcript state
+        console.log('Current transcript has', this.transcriptData.length, 'items');
+        console.log('Current transcript timecodes:');
+        this.transcriptData.slice(-5).forEach((item, index) => {
+            if (item.timecode) {
+                const seconds = this.timecodeToSeconds(item.timecode);
+                console.log(`  Recent[${this.transcriptData.length - 5 + index}]: ${this.formatTimecode(item.timecode)} (${seconds}s) - "${item.content?.substring(0, 30) || 'N/A'}"`);
+            }
+        });
+
+        // Mark refresh in progress and store timecode range
         this.refreshInProgress = true;
         this.refreshStartTime = refreshData.data.startTimecode;
         this.refreshEndTime = refreshData.data.endTimecode;
+
+        console.log('Entering refresh mode - buffering subsequent data until E command');
     }
 
     handleRefreshEnd(endRefreshData) {
+        console.log('=== REFRESH END PROCESSING ===');
         console.log('Refresh ended, processing buffered data:', endRefreshData.data.refreshData.length, 'items');
+        console.log('Refresh timecode range:', this.formatTimecode(this.refreshStartTime), 'to', this.formatTimecode(this.refreshEndTime));
+
+        // Log the buffered refresh data
+        console.log('Buffered refresh data:');
+        endRefreshData.data.refreshData.forEach((item, index) => {
+            if (item.type === 'text') {
+                const timecode = item.timecode ? this.formatTimecode(item.timecode) : 'no-timecode';
+                console.log(`  Refresh[${index}]: TEXT at ${timecode} - "${item.content?.substring(0, 50) || 'N/A'}"`);
+            } else {
+                console.log(`  Refresh[${index}]: COMMAND ${item.command} - ${JSON.stringify(item.data)}`);
+            }
+        });
 
         // Process the refresh buffer data
         if (endRefreshData.data.refreshData && endRefreshData.data.refreshData.length > 0) {
@@ -597,25 +627,55 @@ class BridgeViewer {
             const replaceInfo = this.findItemsToReplace(this.refreshStartTime, this.refreshEndTime);
 
             if (replaceInfo.found) {
-                console.log(`Replacing ${replaceInfo.count} items at positions ${replaceInfo.startIndex} to ${replaceInfo.endIndex}`);
+                console.log(`REPLACING: ${replaceInfo.count} items at positions ${replaceInfo.startIndex} to ${replaceInfo.endIndex}`);
+
+                // Log what's being removed
+                console.log('REMOVING these items:');
+                for (let i = replaceInfo.startIndex; i <= replaceInfo.endIndex; i++) {
+                    const item = this.transcriptData[i];
+                    const timecode = item.timecode ? this.formatTimecode(item.timecode) : 'no-timecode';
+                    console.log(`  REMOVE[${i}]: ${timecode} - "${item.content?.substring(0, 40) || 'N/A'}"`);
+                }
 
                 // Prepare the new refresh data with proper timestamps
-                const newItems = endRefreshData.data.refreshData.map(item => ({
-                    ...item,
-                    timestamp: new Date(),
-                    sessionId: this.currentSession
-                }));
+                const newItems = endRefreshData.data.refreshData.map((item, index) => {
+                    const newItem = {
+                        ...item,
+                        timestamp: new Date(),
+                        sessionId: this.currentSession
+                    };
+
+                    // Log what's being added
+                    if (item.type === 'text') {
+                        const timecode = item.timecode ? this.formatTimecode(item.timecode) : 'no-timecode';
+                        console.log(`  ADD[${index}]: ${timecode} - "${item.content?.substring(0, 40) || 'N/A'}"`);
+                    }
+
+                    return newItem;
+                });
+
+                console.log(`EXECUTING SPLICE: transcriptData.splice(${replaceInfo.startIndex}, ${replaceInfo.count}, ...${newItems.length} items)`);
 
                 // Replace the items at the exact location
                 this.transcriptData.splice(replaceInfo.startIndex, replaceInfo.count, ...newItems);
 
+                console.log(`NEW TRANSCRIPT LENGTH: ${this.transcriptData.length} items`);
+
                 // Completely refresh the display to show the updated content
                 this.refreshTranscript();
 
-                console.log(`Refresh complete - replaced ${replaceInfo.count} items with ${newItems.length} new items`);
+                console.log(`REFRESH COMPLETE: Replaced ${replaceInfo.count} items with ${newItems.length} new items`);
             } else {
-                console.log('No items found in timecode range - adding refresh data to end');
+                console.log('WARNING: No items found in timecode range - this may indicate a problem');
+                console.log('Current transcript data timecodes:');
+                this.transcriptData.forEach((item, index) => {
+                    if (item.timecode) {
+                        console.log(`  Transcript[${index}]: ${this.formatTimecode(item.timecode)} - "${item.content?.substring(0, 30) || 'N/A'}"`);
+                    }
+                });
+
                 // Fallback: add to end if no matching timecode range found
+                console.log('FALLBACK: Adding refresh data to end of transcript');
                 endRefreshData.data.refreshData.forEach(item => {
                     item.timestamp = new Date();
                     item.sessionId = this.currentSession;
@@ -625,76 +685,68 @@ class BridgeViewer {
             }
         }
 
+        console.log('=== REFRESH END COMPLETE ===');
         this.refreshInProgress = false;
         this.refreshStartTime = null;
         this.refreshEndTime = null;
     }
 
     findItemsToReplace(startTime, endTime) {
-        console.log('Finding paragraphs to replace between timecodes:', this.formatTimecode(startTime), 'and', this.formatTimecode(endTime));
+        console.log('Finding items to replace between EXACT timecodes:', this.formatTimecode(startTime), 'and', this.formatTimecode(endTime));
 
-        // Convert timecodes to comparable format (seconds since start)
         const startSeconds = this.timecodeToSeconds(startTime);
         const endSeconds = this.timecodeToSeconds(endTime);
 
         let startIndex = -1;
         let endIndex = -1;
-        let candidateItems = [];
 
-        // Find items in the timecode range and expand to full paragraphs
+        console.log(`Looking for items between ${startSeconds} and ${endSeconds} seconds`);
+
+        // Find EXACT range based on timecodes - no tolerance
         for (let i = 0; i < this.transcriptData.length; i++) {
             const item = this.transcriptData[i];
 
             if (item.timecode) {
                 const itemSeconds = this.timecodeToSeconds(item.timecode);
+                console.log(`Item ${i}: ${itemSeconds} seconds - "${item.content?.substring(0, 30) || 'N/A'}"`);
 
-                // Use broader tolerance for paragraph matching (2 seconds)
-                if (itemSeconds >= (startSeconds - 2) && itemSeconds <= (endSeconds + 2)) {
-                    candidateItems.push({ index: i, item: item, seconds: itemSeconds });
+                // Find first item at or after start time
+                if (startIndex === -1 && itemSeconds >= startSeconds) {
+                    startIndex = i;
+                    console.log(`Found start index: ${i} at ${itemSeconds} seconds`);
+                }
 
-                    if (startIndex === -1) {
-                        startIndex = i;
-                    }
+                // Find last item at or before end time
+                if (itemSeconds <= endSeconds) {
                     endIndex = i;
+                    console.log(`Updated end index to: ${i} at ${itemSeconds} seconds`);
+                } else if (startIndex !== -1) {
+                    // We've gone past the end time
+                    break;
                 }
             }
         }
 
-        // Expand selection to include full paragraphs
-        if (startIndex !== -1) {
-            // Expand backward to include the start of the paragraph
-            while (startIndex > 0 && this.isSameParagraph(this.transcriptData[startIndex - 1], this.transcriptData[startIndex])) {
-                startIndex--;
-            }
+        if (startIndex !== -1 && endIndex !== -1 && endIndex >= startIndex) {
+            const count = endIndex - startIndex + 1;
+            console.log(`EXACT MATCH: Will replace ${count} items from index ${startIndex} to ${endIndex}`);
 
-            // Expand forward to include the end of the paragraph
-            while (endIndex < this.transcriptData.length - 1 && this.isSameParagraph(this.transcriptData[endIndex], this.transcriptData[endIndex + 1])) {
-                endIndex++;
-            }
-        }
-
-        console.log(`Found ${candidateItems.length} candidate items, expanded to paragraph range:`);
-        if (startIndex !== -1 && endIndex !== -1) {
-            console.log(`Will replace paragraph(s) from index ${startIndex} to ${endIndex} (${endIndex - startIndex + 1} items)`);
-
-            // Log the content that will be replaced
-            for (let i = startIndex; i <= Math.min(endIndex, startIndex + 2); i++) {
+            // Log what will be replaced
+            for (let i = startIndex; i <= endIndex; i++) {
                 const item = this.transcriptData[i];
-                console.log(`  Index ${i}: "${item.content?.substring(0, 50) || 'N/A'}..."`);
-            }
-            if (endIndex > startIndex + 2) {
-                console.log(`  ... and ${endIndex - startIndex - 2} more items`);
+                const seconds = item.timecode ? this.timecodeToSeconds(item.timecode) : 'no-timecode';
+                console.log(`  REPLACE[${i}]: ${seconds}s - "${item.content?.substring(0, 40) || 'N/A'}"`);
             }
 
             return {
                 found: true,
                 startIndex: startIndex,
                 endIndex: endIndex,
-                count: endIndex - startIndex + 1
+                count: count
             };
         }
 
-        console.log('No items found in the specified timecode range - will try a broader search');
+        console.log(`NO EXACT MATCH FOUND - trying fallback search`);
         return this.findItemsNearTimecode(startTime, endTime);
     }
 

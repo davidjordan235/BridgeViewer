@@ -271,6 +271,28 @@ class LawBridgeParser {
       this.buffer = this.buffer.slice(commandLength);
     }
 
+    // Emit any remaining accumulated text at the end
+    if (this.currentParagraph.trim()) {
+      const textData = {
+        type: 'text',
+        content: this.currentParagraph.trim(),
+        page: this.currentPage,
+        line: this.currentLine,
+        format: this.currentFormat,
+        formatDescription: this.getFormatDescription(this.currentFormat),
+        timecode: this.currentTimecode
+      };
+
+      results.push(textData);
+
+      // If in refresh mode, also buffer this text
+      if (this.refreshMode) {
+        this.refreshBuffer.push({...textData});
+      }
+
+      this.currentParagraph = ''; // Reset paragraph
+    }
+
     return results;
   }
 
