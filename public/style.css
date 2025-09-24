@@ -307,6 +307,11 @@ body {
     position: relative;
 }
 
+.temp-item {
+    opacity: 0.9;
+    border-left-color: #ff9800 !important;
+}
+
 .current-word-cursor::after {
     content: '';
     position: absolute;

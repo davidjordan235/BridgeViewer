@@ -20,6 +20,8 @@ class BridgeViewer {
         this.refreshEndTime = null;
         this.showCurrentWordCursor = true;
         this.currentWordElement = null;
+        this.textAccumulator = ''; // Accumulate characters for real-time display
+        this.lastTextElement = null; // Track the last text element for appending
         this.colors = {
             question: '#fdf2f2',
             answer: '#f2f9f2',
@@ -198,13 +200,123 @@ class BridgeViewer {
         // Only display text content, not control commands
         // Commands like P, N, F, T, D, K, R, E should be processed silently
         if (data.type === 'text' && !this.refreshInProgress) {
-            // Only display text in real-time if we're not in refresh mode
-            // During refresh, text will be processed when E command is received
-            if (this.matchesFilters(data) && this.matchesSearch(data)) {
-                this.addTranscriptItem(data);
-            }
+            // Handle character-by-character text for real-time display
+            this.handleRealTimeText(data);
         }
         // Commands are processed silently - they update state but don't appear in transcript
+    }
+
+    handleRealTimeText(data) {
+        const char = data.content;
+
+        // Handle line breaks properly - convert CR/LF to actual line breaks
+        if (char === '\r' || char === '\n') {
+            // If we have accumulated text, finalize it first
+            if (this.textAccumulator.trim()) {
+                this.finalizeAccumulatedText();
+            }
+
+            // Add line break
+            this.addLineBreak();
+            return;
+        }
+
+        // Accumulate the character
+        this.textAccumulator += char;
+
+        // Update the display immediately
+        this.updateRealTimeDisplay();
+    }
+
+    finalizeAccumulatedText() {
+        if (!this.textAccumulator.trim()) return;
+
+        // Apply filters to the accumulated text
+        const textData = {
+            type: 'text',
+            content: this.textAccumulator,
+            page: this.transcriptData[this.transcriptData.length - 1]?.page || 0,
+            line: this.transcriptData[this.transcriptData.length - 1]?.line || 0,
+            format: this.transcriptData[this.transcriptData.length - 1]?.format || 0,
+            timestamp: new Date()
+        };
+
+        // Only add if it matches filters
+        if (this.matchesFilters(textData) && this.matchesSearch(textData)) {
+            this.addTranscriptItem(textData);
+        }
+
+        // Clear the accumulator
+        this.textAccumulator = '';
+        this.lastTextElement = null;
+    }
+
+    updateRealTimeDisplay() {
+        // Create or update the temporary text display
+        if (!this.lastTextElement) {
+            // Create a new temporary element
+            const tempItem = document.createElement('div');
+            tempItem.className = 'transcript-item text temp-item';
+            tempItem.dataset.temp = 'true';
+
+            const meta = document.createElement('div');
+            meta.className = 'item-meta';
+            meta.innerHTML = '<span>' + new Date().toLocaleTimeString() + '</span>';
+
+            const content = document.createElement('div');
+            content.className = 'item-content';
+            content.textContent = this.textAccumulator;
+
+            tempItem.appendChild(meta);
+            tempItem.appendChild(content);
+
+            // Remove placeholder if exists
+            const placeholder = this.elements.transcript.querySelector('.transcript-placeholder');
+            if (placeholder) {
+                placeholder.remove();
+            }
+
+            this.elements.transcript.appendChild(tempItem);
+            this.lastTextElement = content;
+
+            // Auto-scroll
+            if (this.autoScroll) {
+                this.elements.transcript.scrollTop = this.elements.transcript.scrollHeight;
+            }
+        } else {
+            // Update existing temporary element
+            this.lastTextElement.textContent = this.textAccumulator;
+
+            // Update cursor position if enabled
+            if (this.showCurrentWordCursor) {
+                this.updateCurrentWordCursor();
+            }
+        }
+    }
+
+    addLineBreak() {
+        // Finalize any accumulated text first
+        this.finalizeAccumulatedText();
+
+        // Add a line break element or ensure proper spacing
+        const lastItem = this.elements.transcript.lastElementChild;
+        if (lastItem && lastItem.querySelector('.item-content')) {
+            const content = lastItem.querySelector('.item-content');
+            content.innerHTML += '<br>';
+        }
+    }
+
+    updateCurrentWordCursor() {
+        if (!this.lastTextElement) return;
+
+        // Remove previous cursor
+        const existingCursor = this.elements.transcript.querySelector('.current-word-cursor');
+        if (existingCursor) {
+            existingCursor.classList.remove('current-word-cursor');
+        }
+
+        // Add cursor to the temporary element
+        this.lastTextElement.parentElement.classList.add('current-word-cursor');
     }
 
     matchesFilters(data) {

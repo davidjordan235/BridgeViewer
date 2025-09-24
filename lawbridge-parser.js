@@ -50,10 +50,72 @@ class LawBridgeParser {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${frames.toString().padStart(2, '0')}`;
   }
 
-  // Add data to buffer
+  // Add data to buffer and process immediately
   addData(data) {
-    this.buffer = Buffer.concat([this.buffer, Buffer.from(data)]);
-    return this.processBuffer();
+    const results = [];
+
+    // Process each byte immediately as it comes in
+    for (let i = 0; i < data.length; i++) {
+      const byte = data[i];
+
+      if (byte === this.STX) {
+        // Found start of command - add to buffer for command processing
+        this.buffer = Buffer.concat([this.buffer, Buffer.from([byte])]);
+      } else if (this.buffer.length > 0 && this.buffer[0] === this.STX) {
+        // We're in the middle of a command - add to buffer
+        this.buffer = Buffer.concat([this.buffer, Buffer.from([byte])]);
+
+        // Try to process the command if we might have enough data
+        const commandResults = this.tryProcessCommand();
+        results.push(...commandResults);
+      } else {
+        // Regular text character - emit immediately
+        const char = String.fromCharCode(byte);
+
+        if (char && char.charCodeAt(0) >= 32 || char === '\r' || char === '\n' || char === '\t') {
+          // Emit this character immediately
+          const textData = {
+            type: 'text',
+            content: char,
+            page: this.currentPage,
+            line: this.currentLine,
+            format: this.currentFormat,
+            formatDescription: this.getFormatDescription(this.currentFormat),
+            timecode: this.currentTimecode
+          };
+
+          results.push(textData);
+
+          // If in refresh mode, also buffer this text
+          if (this.refreshMode) {
+            this.refreshBuffer.push({...textData});
+          }
+        }
+      }
+    }
+
+    return results;
+  }
+
+  // Try to process command from buffer
+  tryProcessCommand() {
+    if (this.buffer.length < 3) return []; // Need at least STX + command + ETX
+
+    const commandResult = this.processCommand(0);
+    if (commandResult.commandData && commandResult.bytesConsumed > 0) {
+      // Remove the processed command from buffer
+      this.buffer = this.buffer.slice(commandResult.bytesConsumed);
+
+      return [{
+        type: 'command',
+        command: commandResult.command,
+        data: commandResult.commandData,
+        page: this.currentPage,
+        line: this.currentLine
+      }];
+    }
+
+    return [];
   }
 
   // Process buffered data and extract commands
