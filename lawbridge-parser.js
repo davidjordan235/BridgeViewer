@@ -59,49 +59,17 @@ class LawBridgeParser {
   // Process buffered data and extract commands
   processBuffer() {
     const results = [];
+    let textAccumulator = '';
 
-    while (this.buffer.length > 0) {
-      const stxIndex = this.buffer.indexOf(this.STX);
-
-      // If no STX found, treat remaining buffer as text
-      if (stxIndex === -1) {
-        if (this.buffer.length > 0) {
-          const text = this.buffer.toString('ascii');
-
-          // Emit text immediately instead of accumulating
-          if (text.trim()) {
-            const textData = {
-              type: 'text',
-              content: text,
-              page: this.currentPage,
-              line: this.currentLine,
-              format: this.currentFormat,
-              formatDescription: this.getFormatDescription(this.currentFormat),
-              timecode: this.currentTimecode
-            };
-
-            results.push(textData);
-
-            // If in refresh mode, also buffer this text
-            if (this.refreshMode) {
-              this.refreshBuffer.push({...textData});
-            }
-          }
-
-          this.buffer = Buffer.alloc(0);
-        }
-        break;
-      }
-
-      // Process any text before the command
-      if (stxIndex > 0) {
-        const text = this.buffer.slice(0, stxIndex).toString('ascii');
-
-        // Emit text immediately instead of accumulating
-        if (text.trim()) {
+    let i = 0;
+    while (i < this.buffer.length) {
+      // Check if we're at the start of a command (STX)
+      if (this.buffer[i] === this.STX) {
+        // Emit any accumulated text before processing the command
+        if (textAccumulator) {
           const textData = {
             type: 'text',
-            content: text,
+            content: textAccumulator,
             page: this.currentPage,
             line: this.currentLine,
             format: this.currentFormat,
@@ -115,152 +83,184 @@ class LawBridgeParser {
           if (this.refreshMode) {
             this.refreshBuffer.push({...textData});
           }
+
+          textAccumulator = '';
         }
 
-        this.buffer = this.buffer.slice(stxIndex);
+        // Process the command
+        const commandResult = this.processCommand(i);
+        if (commandResult.commandData) {
+          results.push({
+            type: 'command',
+            command: commandResult.command,
+            data: commandResult.commandData,
+            page: this.currentPage,
+            line: this.currentLine
+          });
+
+          // If in refresh mode, buffer the command for later processing
+          if (this.refreshMode && commandResult.command !== 'R' && commandResult.command !== 'E') {
+            this.refreshBuffer.push({
+              type: 'command',
+              command: commandResult.command,
+              data: commandResult.commandData,
+              page: this.currentPage,
+              line: this.currentLine
+            });
+          }
+        }
+
+        if (commandResult.bytesConsumed > 0) {
+          i += commandResult.bytesConsumed;
+        } else {
+          i++; // Skip this STX and continue
+        }
+      } else {
+        // Regular character - add to text accumulator
+        textAccumulator += String.fromCharCode(this.buffer[i]);
+        i++;
       }
-
-      // Check if we have enough data for a command
-      if (this.buffer.length < 3) break; // Need at least STX + command + ETX
-
-      const command = String.fromCharCode(this.buffer[1]);
-      let commandLength = 3; // Default: STX + command + ETX
-      let commandData = null;
-
-      // Determine command length and extract data based on command type
-      switch (command) {
-        case 'P': // Page number (2 bytes)
-          if (this.buffer.length < 5) return results; // STX + P + 2 bytes + ETX
-          commandLength = 5;
-          if (this.buffer[4] === this.ETX) {
-            const pageNum = this.buffer.readUInt16LE(2);
-            this.currentPage = pageNum;
-            commandData = { pageNumber: pageNum };
-          }
-          break;
-
-        case 'N': // Line number (1 byte)
-          if (this.buffer.length < 4) return results; // STX + N + 1 byte + ETX
-          commandLength = 4;
-          if (this.buffer[3] === this.ETX) {
-            const lineNum = this.buffer[2];
-            this.currentLine = lineNum;
-            commandData = { lineNumber: lineNum };
-          }
-          break;
-
-        case 'F': // Format (1 byte)
-          if (this.buffer.length < 4) return results;
-          commandLength = 4;
-          if (this.buffer[3] === this.ETX) {
-            const format = this.buffer[2];
-
-            // Just update the current format - no paragraph accumulation needed
-            this.currentFormat = format;
-            commandData = {
-              format: format,
-              formatDescription: this.getFormatDescription(format)
-            };
-          }
-          break;
-
-        case 'T': // Timecode (4 bytes)
-          if (this.buffer.length < 7) return results; // STX + T + 4 bytes + ETX
-          commandLength = 7;
-          if (this.buffer[6] === this.ETX) {
-            const timecodeBytes = this.buffer.slice(2, 6);
-            const timecode = this.parseTimecode(timecodeBytes);
-            this.currentTimecode = timecode; // Store current timecode for text association
-            commandData = {
-              timecode: timecode,
-              timecodeString: this.formatTimecode(timecode)
-            };
-          }
-          break;
-
-        case 'D': // Delete (no data)
-          if (this.buffer[2] === this.ETX) {
-            commandData = { action: 'delete' };
-          }
-          break;
-
-        case 'K': // Prevent saving (no data)
-          if (this.buffer[2] === this.ETX) {
-            commandData = { action: 'preventSaving' };
-          }
-          break;
-
-        case 'E': // End refresh (no data)
-          if (this.buffer[2] === this.ETX) {
-            this.refreshMode = false;
-            commandData = {
-              action: 'endRefresh',
-              refreshStart: this.refreshStart,
-              refreshEnd: this.refreshEnd,
-              refreshData: [...this.refreshBuffer]
-            };
-            this.refreshBuffer = [];
-            this.refreshStart = null;
-            this.refreshEnd = null;
-          }
-          break;
-
-        case 'R': // Refresh (8 bytes: start and end timecodes)
-          if (this.buffer.length < 11) return results; // STX + R + 8 bytes + ETX
-          commandLength = 11;
-          if (this.buffer[10] === this.ETX) {
-            const startBytes = this.buffer.slice(2, 6);
-            const endBytes = this.buffer.slice(6, 10);
-            this.refreshStart = this.parseTimecode(startBytes);
-            this.refreshEnd = this.parseTimecode(endBytes);
-            this.refreshMode = true;
-            this.refreshBuffer = [];
-            commandData = {
-              action: 'refresh',
-              startTimecode: this.refreshStart,
-              endTimecode: this.refreshEnd,
-              startTimecodeString: this.formatTimecode(this.refreshStart),
-              endTimecodeString: this.formatTimecode(this.refreshEnd)
-            };
-          }
-          break;
-
-        default:
-          // Unknown command, skip this STX and continue
-          this.buffer = this.buffer.slice(1);
-          continue;
-      }
-
-      // If we couldn't parse the command properly, wait for more data
-      if (commandData === null) {
-        break;
-      }
-
-      // Add command to results
-      results.push({
-        type: 'command',
-        command: command,
-        data: commandData,
-        page: this.currentPage,
-        line: this.currentLine
-      });
-
-      // If in refresh mode, buffer the command for later processing
-      if (this.refreshMode && command !== 'R' && command !== 'E') {
-        this.refreshBuffer.push({
-          type: 'command',
-          command: command,
-          data: commandData,
-          page: this.currentPage,
-          line: this.currentLine
-        });
-      }
-
-      // Remove processed command from buffer
-      this.buffer = this.buffer.slice(commandLength);
     }
 
+    // Emit any remaining text
+    if (textAccumulator) {
+      const textData = {
+        type: 'text',
+        content: textAccumulator,
+        page: this.currentPage,
+        line: this.currentLine,
+        format: this.currentFormat,
+        formatDescription: this.getFormatDescription(this.currentFormat),
+        timecode: this.currentTimecode
+      };
+
+      results.push(textData);
+
+      // If in refresh mode, also buffer this text
+      if (this.refreshMode) {
+        this.refreshBuffer.push({...textData});
+      }
+    }
+
+    // Clear the buffer as we've processed everything
+    this.buffer = Buffer.alloc(0);
+
     return results;
+  }
+
+  // Process a single command starting at the given index
+  processCommand(startIndex) {
+    // Check if we have enough data for a command
+    if (startIndex + 2 >= this.buffer.length) {
+      return { command: null, commandData: null, bytesConsumed: 0 };
+    }
+
+    const command = String.fromCharCode(this.buffer[startIndex + 1]);
+    let commandLength = 3; // Default: STX + command + ETX
+    let commandData = null;
+
+    // Determine command length and extract data based on command type
+    switch (command) {
+      case 'P': // Page number (2 bytes)
+        if (startIndex + 4 >= this.buffer.length) return { command, commandData: null, bytesConsumed: 0 };
+        commandLength = 5;
+        if (this.buffer[startIndex + 4] === this.ETX) {
+          const pageNum = this.buffer.readUInt16LE(startIndex + 2);
+          this.currentPage = pageNum;
+          commandData = { pageNumber: pageNum };
+        }
+        break;
+
+      case 'N': // Line number (1 byte)
+        if (startIndex + 3 >= this.buffer.length) return { command, commandData: null, bytesConsumed: 0 };
+        commandLength = 4;
+        if (this.buffer[startIndex + 3] === this.ETX) {
+          const lineNum = this.buffer[startIndex + 2];
+          this.currentLine = lineNum;
+          commandData = { lineNumber: lineNum };
+        }
+        break;
+
+      case 'F': // Format (1 byte)
+        if (startIndex + 3 >= this.buffer.length) return { command, commandData: null, bytesConsumed: 0 };
+        commandLength = 4;
+        if (this.buffer[startIndex + 3] === this.ETX) {
+          const format = this.buffer[startIndex + 2];
+          this.currentFormat = format;
+          commandData = {
+            format: format,
+            formatDescription: this.getFormatDescription(format)
+          };
+        }
+        break;
+
+      case 'T': // Timecode (4 bytes)
+        if (startIndex + 6 >= this.buffer.length) return { command, commandData: null, bytesConsumed: 0 };
+        commandLength = 7;
+        if (this.buffer[startIndex + 6] === this.ETX) {
+          const timecodeBytes = this.buffer.slice(startIndex + 2, startIndex + 6);
+          const timecode = this.parseTimecode(timecodeBytes);
+          this.currentTimecode = timecode;
+          commandData = {
+            timecode: timecode,
+            timecodeString: this.formatTimecode(timecode)
+          };
+        }
+        break;
+
+      case 'D': // Delete (no data)
+        if (this.buffer[startIndex + 2] === this.ETX) {
+          commandData = { action: 'delete' };
+        }
+        break;
+
+      case 'K': // Prevent saving (no data)
+        if (this.buffer[startIndex + 2] === this.ETX) {
+          commandData = { action: 'preventSaving' };
+        }
+        break;
+
+      case 'E': // End refresh (no data)
+        if (this.buffer[startIndex + 2] === this.ETX) {
+          this.refreshMode = false;
+          commandData = {
+            action: 'endRefresh',
+            refreshStart: this.refreshStart,
+            refreshEnd: this.refreshEnd,
+            refreshData: [...this.refreshBuffer]
+          };
+          this.refreshBuffer = [];
+          this.refreshStart = null;
+          this.refreshEnd = null;
+        }
+        break;
+
+      case 'R': // Refresh (8 bytes: start and end timecodes)
+        if (startIndex + 10 >= this.buffer.length) return { command, commandData: null, bytesConsumed: 0 };
+        commandLength = 11;
+        if (this.buffer[startIndex + 10] === this.ETX) {
+          const startBytes = this.buffer.slice(startIndex + 2, startIndex + 6);
+          const endBytes = this.buffer.slice(startIndex + 6, startIndex + 10);
+          this.refreshStart = this.parseTimecode(startBytes);
+          this.refreshEnd = this.parseTimecode(endBytes);
+          this.refreshMode = true;
+          this.refreshBuffer = [];
+          commandData = {
+            action: 'refresh',
+            startTimecode: this.refreshStart,
+            endTimecode: this.refreshEnd,
+            startTimecodeString: this.formatTimecode(this.refreshStart),
+            endTimecodeString: this.formatTimecode(this.refreshEnd)
+          };
+        }
+        break;
+
+      default:
+        // Unknown command, return minimal consumption
+        return { command, commandData: null, bytesConsumed: 1 };
+    }
+
+    return { command, commandData, bytesConsumed: commandLength };
   }
 
   // Reset parser state
