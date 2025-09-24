@@ -427,6 +427,7 @@ body {
 .item-content {
     white-space: pre-wrap;
     word-wrap: break-word;
+    line-height: 1.4;
 }
 
 .command-info {

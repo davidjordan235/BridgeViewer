@@ -282,25 +282,33 @@ class BridgeViewer {
     processTextWithWordTracking(text, searchTerm) {
         if (!text) return '';
 
-        // Split text into words while preserving whitespace
-        const words = text.split(/(\s+)/);
+        // First, convert line breaks to HTML
+        text = text.replace(/\r\n/g, '<br>').replace(/\r/g, '<br>').replace(/\n/g, '<br>');
+
+        // Split text into words while preserving whitespace and line breaks
+        const parts = text.split(/(\s+|<br>)/);
         let html = '';
 
-        words.forEach((word, index) => {
-            if (word.trim()) {
-                // This is a word (not whitespace)
+        parts.forEach((part, index) => {
+            if (part === '<br>') {
+                // Preserve line breaks
+                html += '<br>';
+            } else if (part.trim() && part !== '<br>') {
+                // This is a word (not whitespace or line break)
                 const wordId = `word-${Date.now()}-${index}`;
-                let wordHtml = `<span class="word" data-word-id="${wordId}">${this.escapeHtml(word)}</span>`;
+                let wordHtml = `<span class="word" data-word-id="${wordId}">${this.escapeHtml(part)}</span>`;
 
                 // Apply search highlighting if needed
-                if (searchTerm && word.toLowerCase().includes(searchTerm.toLowerCase())) {
+                if (searchTerm && part.toLowerCase().includes(searchTerm.toLowerCase())) {
                     wordHtml = this.highlightSearch(wordHtml, searchTerm);
                 }
 
                 html += wordHtml;
             } else {
-                // This is whitespace, preserve it
-                html += this.escapeHtml(word);
+                // This is whitespace, preserve it (but not line breaks since those are handled above)
+                if (part !== '<br>') {
+                    html += this.escapeHtml(part);
+                }
             }
         });
 
