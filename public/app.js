@@ -18,6 +18,15 @@ class BridgeViewer {
         this.refreshInProgress = false;
         this.refreshStartTime = null;
         this.refreshEndTime = null;
+        this.showCurrentWordCursor = true;
+        this.currentWordElement = null;
+        this.colors = {
+            question: '#fdf2f2',
+            answer: '#f2f9f2',
+            speaker: '#f8f4fd',
+            text: '#333333',
+            currentWord: '#ffeb3b'
+        };
 
         this.initializeUI();
         this.connectWebSocket();
@@ -42,6 +51,13 @@ class BridgeViewer {
             showTimestamps: document.getElementById('showTimestamps'),
             showTimecodes: document.getElementById('showTimecodes'),
             showPageNumbers: document.getElementById('showPageNumbers'),
+            showCurrentWordCursor: document.getElementById('showCurrentWordCursor'),
+            questionColor: document.getElementById('questionColor'),
+            answerColor: document.getElementById('answerColor'),
+            speakerColor: document.getElementById('speakerColor'),
+            textColor: document.getElementById('textColor'),
+            currentWordColor: document.getElementById('currentWordColor'),
+            resetColorsBtn: document.getElementById('resetColorsBtn'),
             currentPage: document.getElementById('currentPage'),
             currentLine: document.getElementById('currentLine'),
             currentFormat: document.getElementById('currentFormat'),
@@ -54,6 +70,9 @@ class BridgeViewer {
 
         // Bind event listeners
         this.bindEvents();
+
+        // Initialize colors
+        this.updateColors();
     }
 
     bindEvents() {
@@ -69,6 +88,15 @@ class BridgeViewer {
         this.elements.showTimestamps.addEventListener('change', () => this.toggleTimestamps());
         this.elements.showTimecodes.addEventListener('change', () => this.toggleTimecodes());
         this.elements.showPageNumbers.addEventListener('change', () => this.togglePageNumbers());
+        this.elements.showCurrentWordCursor.addEventListener('change', () => this.toggleCurrentWordCursor());
+
+        // Color controls
+        this.elements.questionColor.addEventListener('input', () => this.updateColors());
+        this.elements.answerColor.addEventListener('input', () => this.updateColors());
+        this.elements.speakerColor.addEventListener('input', () => this.updateColors());
+        this.elements.textColor.addEventListener('input', () => this.updateColors());
+        this.elements.currentWordColor.addEventListener('input', () => this.updateColors());
+        this.elements.resetColorsBtn.addEventListener('click', () => this.resetColors());
 
         // Search and filters
         this.elements.searchBtn.addEventListener('click', () => this.performSearch());
@@ -204,6 +232,7 @@ class BridgeViewer {
     addTranscriptItem(data) {
         const item = document.createElement('div');
         item.className = this.getItemClass(data);
+        item.dataset.itemId = data.timestamp || Date.now(); // Add unique identifier
 
         const meta = document.createElement('div');
         meta.className = 'item-meta';
@@ -223,10 +252,9 @@ class BridgeViewer {
         const content = document.createElement('div');
         content.className = 'item-content';
 
-        // Since we only display text now, this will always be text
-        content.textContent = data.content;
-        if (this.searchTerm && data.content.toLowerCase().includes(this.searchTerm.toLowerCase())) {
-            content.innerHTML = this.highlightSearch(data.content, this.searchTerm);
+        // Process text content for word-level tracking
+        if (data.content) {
+            content.innerHTML = this.processTextWithWordTracking(data.content, this.searchTerm);
         }
 
         item.appendChild(meta);
@@ -240,9 +268,63 @@ class BridgeViewer {
 
         this.elements.transcript.appendChild(item);
 
+        // Set this as the current word cursor location if it's the most recent
+        if (this.showCurrentWordCursor && !this.refreshInProgress) {
+            this.setCurrentWordCursor(item);
+        }
+
         // Auto-scroll to bottom if user is at the bottom
         if (this.autoScroll) {
             this.elements.transcript.scrollTop = this.elements.transcript.scrollHeight;
+        }
+    }
+
+    processTextWithWordTracking(text, searchTerm) {
+        if (!text) return '';
+
+        // Split text into words while preserving whitespace
+        const words = text.split(/(\s+)/);
+        let html = '';
+
+        words.forEach((word, index) => {
+            if (word.trim()) {
+                // This is a word (not whitespace)
+                const wordId = `word-${Date.now()}-${index}`;
+                let wordHtml = `<span class="word" data-word-id="${wordId}">${this.escapeHtml(word)}</span>`;
+
+                // Apply search highlighting if needed
+                if (searchTerm && word.toLowerCase().includes(searchTerm.toLowerCase())) {
+                    wordHtml = this.highlightSearch(wordHtml, searchTerm);
+                }
+
+                html += wordHtml;
+            } else {
+                // This is whitespace, preserve it
+                html += this.escapeHtml(word);
+            }
+        });
+
+        return html;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    setCurrentWordCursor(transcriptItem) {
+        // Remove previous cursor
+        if (this.currentWordElement) {
+            this.currentWordElement.classList.remove('current-word-cursor');
+        }
+
+        // Find the last word in the new transcript item
+        const words = transcriptItem.querySelectorAll('.word');
+        if (words.length > 0) {
+            const lastWord = words[words.length - 1];
+            lastWord.classList.add('current-word-cursor');
+            this.currentWordElement = lastWord;
         }
     }
 
@@ -428,6 +510,73 @@ class BridgeViewer {
         }
     }
 
+    toggleCurrentWordCursor() {
+        this.showCurrentWordCursor = this.elements.showCurrentWordCursor.checked;
+        if (!this.showCurrentWordCursor && this.currentWordElement) {
+            this.currentWordElement.classList.remove('current-word-cursor');
+            this.currentWordElement = null;
+        }
+    }
+
+    updateColors() {
+        // Get color values from inputs
+        this.colors.question = this.elements.questionColor.value;
+        this.colors.answer = this.elements.answerColor.value;
+        this.colors.speaker = this.elements.speakerColor.value;
+        this.colors.text = this.elements.textColor.value;
+        this.colors.currentWord = this.elements.currentWordColor.value;
+
+        // Apply colors using CSS custom properties
+        document.documentElement.style.setProperty('--question-bg-color', this.colors.question);
+        document.documentElement.style.setProperty('--answer-bg-color', this.colors.answer);
+        document.documentElement.style.setProperty('--speaker-bg-color', this.colors.speaker);
+        document.documentElement.style.setProperty('--text-color', this.colors.text);
+        document.documentElement.style.setProperty('--current-word-color', this.colors.currentWord);
+
+        // Update CSS rules for paragraph backgrounds
+        this.updateParagraphStyles();
+    }
+
+    updateParagraphStyles() {
+        // Create or update style element for dynamic paragraph colors
+        let styleElement = document.getElementById('dynamic-colors');
+        if (!styleElement) {
+            styleElement = document.createElement('style');
+            styleElement.id = 'dynamic-colors';
+            document.head.appendChild(styleElement);
+        }
+
+        styleElement.textContent = `
+            .transcript-item.question { background-color: ${this.colors.question} !important; }
+            .transcript-item.answer { background-color: ${this.colors.answer} !important; }
+            .transcript-item.speaker { background-color: ${this.colors.speaker} !important; }
+            .transcript { color: ${this.colors.text} !important; }
+            .current-word-cursor { background-color: ${this.colors.currentWord} !important; }
+            .current-word-cursor::after { border-color: ${this.colors.currentWord} !important; }
+        `;
+    }
+
+    resetColors() {
+        // Reset to default colors
+        this.colors = {
+            question: '#fdf2f2',
+            answer: '#f2f9f2',
+            speaker: '#f8f4fd',
+            text: '#333333',
+            currentWord: '#ffeb3b'
+        };
+
+        // Update color input values
+        this.elements.questionColor.value = this.colors.question;
+        this.elements.answerColor.value = this.colors.answer;
+        this.elements.speakerColor.value = this.colors.speaker;
+        this.elements.textColor.value = this.colors.text;
+        this.elements.currentWordColor.value = this.colors.currentWord;
+
+        // Apply the reset colors
+        this.updateColors();
+    }
+
     handleRefreshStart(refreshData) {
         console.log('Refresh started:', refreshData.data.startTimecodeString, 'to', refreshData.data.endTimecodeString);
 
@@ -482,7 +631,7 @@ class BridgeViewer {
     }
 
     findItemsToReplace(startTime, endTime) {
-        console.log('Finding items to replace between timecodes:', this.formatTimecode(startTime), 'and', this.formatTimecode(endTime));
+        console.log('Finding paragraphs to replace between timecodes:', this.formatTimecode(startTime), 'and', this.formatTimecode(endTime));
 
         // Convert timecodes to comparable format (seconds since start)
         const startSeconds = this.timecodeToSeconds(startTime);
@@ -492,46 +641,70 @@ class BridgeViewer {
         let endIndex = -1;
         let candidateItems = [];
 
-        // Find all items that might be in the range
+        // Find items in the timecode range and expand to full paragraphs
         for (let i = 0; i < this.transcriptData.length; i++) {
             const item = this.transcriptData[i];
 
-            // Check if this item has a timecode
             if (item.timecode) {
                 const itemSeconds = this.timecodeToSeconds(item.timecode);
 
-                // Use a small tolerance for timecode matching (0.1 seconds)
-                if (itemSeconds >= (startSeconds - 0.1) && itemSeconds <= (endSeconds + 0.1)) {
+                // Use broader tolerance for paragraph matching (2 seconds)
+                if (itemSeconds >= (startSeconds - 2) && itemSeconds <= (endSeconds + 2)) {
                     candidateItems.push({ index: i, item: item, seconds: itemSeconds });
 
                     if (startIndex === -1) {
-                        startIndex = i; // First item in range
+                        startIndex = i;
                     }
-                    endIndex = i; // Keep updating end index
+                    endIndex = i;
                 }
             }
         }
 
-        console.log(`Found ${candidateItems.length} candidate items for replacement:`);
-        candidateItems.forEach(candidate => {
-            console.log(`  Index ${candidate.index}: "${candidate.item.content?.substring(0, 50) || 'N/A'}" at ${this.formatTimecode(candidate.item.timecode)}`);
-        });
+        // Expand selection to include full paragraphs
+        if (startIndex !== -1) {
+            // Expand backward to include the start of the paragraph
+            while (startIndex > 0 && this.isSameParagraph(this.transcriptData[startIndex - 1], this.transcriptData[startIndex])) {
+                startIndex--;
+            }
 
+            // Expand forward to include the end of the paragraph
+            while (endIndex < this.transcriptData.length - 1 && this.isSameParagraph(this.transcriptData[endIndex], this.transcriptData[endIndex + 1])) {
+                endIndex++;
+            }
+        }
+
+        console.log(`Found ${candidateItems.length} candidate items, expanded to paragraph range:`);
         if (startIndex !== -1 && endIndex !== -1) {
-            const count = endIndex - startIndex + 1;
-            console.log(`Will replace ${count} items from index ${startIndex} to ${endIndex}`);
+            console.log(`Will replace paragraph(s) from index ${startIndex} to ${endIndex} (${endIndex - startIndex + 1} items)`);
+
+            // Log the content that will be replaced
+            for (let i = startIndex; i <= Math.min(endIndex, startIndex + 2); i++) {
+                const item = this.transcriptData[i];
+                console.log(`  Index ${i}: "${item.content?.substring(0, 50) || 'N/A'}..."`);
+            }
+            if (endIndex > startIndex + 2) {
+                console.log(`  ... and ${endIndex - startIndex - 2} more items`);
+            }
+
             return {
                 found: true,
                 startIndex: startIndex,
                 endIndex: endIndex,
-                count: count
+                count: endIndex - startIndex + 1
             };
-        } else {
-            console.log('No items found in the specified timecode range - will try a broader search');
-
-            // Fallback: find items near the timecode range
-            return this.findItemsNearTimecode(startTime, endTime);
         }
+
+        console.log('No items found in the specified timecode range - will try a broader search');
+        return this.findItemsNearTimecode(startTime, endTime);
+    }
+
+    isSameParagraph(item1, item2) {
+        // Items belong to the same paragraph if they have the same format and similar page/line info
+        return item1 && item2 &&
+               item1.type === 'text' && item2.type === 'text' &&
+               item1.format === item2.format &&
+               Math.abs((item1.page || 0) - (item2.page || 0)) <= 1 &&
+               Math.abs((item1.line || 0) - (item2.line || 0)) <= 3;
     }
 
     findItemsNearTimecode(startTime, endTime) {

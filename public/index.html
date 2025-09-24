@@ -55,6 +55,37 @@
                                 Show Page Numbers
                             </label>
                         </div>
+                        <div class="option-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="showCurrentWordCursor" checked>
+                                Show Current Word Cursor
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="color-options">
+                        <h4>Paragraph Colors</h4>
+                        <div class="color-group">
+                            <label for="questionColor">Question:</label>
+                            <input type="color" id="questionColor" value="#fdf2f2" class="color-input">
+                        </div>
+                        <div class="color-group">
+                            <label for="answerColor">Answer:</label>
+                            <input type="color" id="answerColor" value="#f2f9f2" class="color-input">
+                        </div>
+                        <div class="color-group">
+                            <label for="speakerColor">Speaker:</label>
+                            <input type="color" id="speakerColor" value="#f8f4fd" class="color-input">
+                        </div>
+                        <div class="color-group">
+                            <label for="textColor">Text Color:</label>
+                            <input type="color" id="textColor" value="#333333" class="color-input">
+                        </div>
+                        <div class="color-group">
+                            <label for="currentWordColor">Current Word:</label>
+                            <input type="color" id="currentWordColor" value="#ffeb3b" class="color-input">
+                        </div>
+                        <button id="resetColorsBtn" class="btn btn-small">Reset to Defaults</button>
                     </div>
 
                     <div class="search-section">
