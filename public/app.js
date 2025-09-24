@@ -22,7 +22,6 @@ class BridgeViewer {
         this.currentWordElement = null;
         this.textAccumulator = ''; // Accumulate characters for real-time display
         this.lastTextElement = null; // Track the last text element for appending
-        this.lastLineBreakCount = 0; // Track consecutive line breaks
         this.currentParagraphFormat = null; // Track current paragraph format
         this.colors = {
             question: '#fdf2f2',
@@ -196,6 +195,9 @@ class BridgeViewer {
                 this.handleRefreshStart(data);
             } else if (data.command === 'E' && data.data.action === 'endRefresh') {
                 this.handleRefreshEnd(data);
+            } else if (data.command === 'N') {
+                // Line number change - this indicates a new line in Eclipse
+                this.handleLineChange(data);
             } else if (data.command === 'F') {
                 // Format change - this indicates a new paragraph
                 this.handleFormatChange(data);
@@ -214,34 +216,17 @@ class BridgeViewer {
     handleRealTimeText(data) {
         const char = data.content;
 
-        // Handle line breaks properly - convert CR/LF to actual line breaks
+        // Eclipse doesn't use CR/LF for line breaks - it uses N and F commands!
+        // CR/LF characters are just protocol artifacts, so treat them as whitespace or ignore them
         if (char === '\r' || char === '\n') {
-            // Add the line break to the accumulator immediately for real-time display
-            this.textAccumulator += '<br>';
-
-            // Update the display to show the line break immediately
+            // Convert line feed characters to spaces to preserve word separation
+            // Don't create line breaks here - that's handled by N and F commands
+            this.textAccumulator += ' ';
             this.updateRealTimeDisplay();
-
-            this.lastLineBreakCount++;
-
-            // Check if this is a paragraph break (double line break)
-            if (this.lastLineBreakCount >= 2) {
-                // This is a paragraph break - finalize current text and start new paragraph
-                if (this.textAccumulator.trim()) {
-                    this.finalizeAccumulatedText();
-                }
-                this.startNewParagraph();
-                this.lastLineBreakCount = 0;
-            }
             return;
         }
 
-        // Reset line break count when we get regular text
-        if (this.lastLineBreakCount > 0 && char.trim()) {
-            this.lastLineBreakCount = 0;
-        }
-
-        // Accumulate the character
+        // Accumulate the character normally
         this.textAccumulator += char;
 
         // Update the display immediately
@@ -249,6 +234,7 @@ class BridgeViewer {
     }
 
     finalizeAccumulatedText() {
+        // Check if there's any actual content (not just whitespace)
         if (!this.textAccumulator.trim()) return;
 
         // Remove any temporary item first
@@ -257,10 +243,10 @@ class BridgeViewer {
             tempItem.remove();
         }
 
-        // Apply filters to the accumulated text
+        // Apply filters to the accumulated text - preserve exact formatting including line breaks
         const textData = {
             type: 'text',
-            content: this.textAccumulator.trim(),
+            content: this.textAccumulator, // Don't trim! Preserve exact Eclipse formatting
             page: this.transcriptData[this.transcriptData.length - 1]?.page || 0,
             line: this.transcriptData[this.transcriptData.length - 1]?.line || 0,
             format: this.currentParagraphFormat || 0,
@@ -311,7 +297,7 @@ class BridgeViewer {
 
             const content = document.createElement('div');
             content.className = 'item-content';
-            content.innerHTML = this.escapeHtmlButKeepBr(this.textAccumulator);
+            content.innerHTML = this.wrapTextWithWordSpans(this.textAccumulator);
 
             tempItem.appendChild(meta);
             tempItem.appendChild(content);
@@ -330,8 +316,8 @@ class BridgeViewer {
                 this.elements.transcript.scrollTop = this.elements.transcript.scrollHeight;
             }
         } else {
-            // Update existing temporary element - use innerHTML to render <br> tags
-            this.lastTextElement.innerHTML = this.escapeHtmlButKeepBr(this.textAccumulator);
+            // Update existing temporary element - wrap text with word spans
+            this.lastTextElement.innerHTML = this.wrapTextWithWordSpans(this.textAccumulator);
 
             // Update cursor position if enabled
             if (this.showCurrentWordCursor) {
@@ -347,6 +333,48 @@ class BridgeViewer {
                   .replace(/&lt;br&gt;/g, '<br>'); // Keep <br> tags
     }
 
+    wrapTextWithWordSpans(text) {
+        if (!text) return '';
+
+        // First escape HTML but keep <br> tags
+        const escapedText = this.escapeHtmlButKeepBr(text);
+
+        // Split text into words and whitespace, preserving <br> tags
+        const parts = escapedText.split(/(\s+|<br>)/);
+        let html = '';
+        let wordIndex = 0;
+
+        parts.forEach((part, index) => {
+            if (part === '<br>') {
+                // Preserve line breaks
+                html += '<br>';
+            } else if (part.trim() && part !== '<br>') {
+                // This is a word (not whitespace or line break)
+                const isCurrentWord = this.isCurrentWord(wordIndex, text);
+                const wordId = `word-${Date.now()}-${wordIndex}`;
+                const cssClass = isCurrentWord ? 'word current-word-cursor' : 'word';
+                html += `<span class="${cssClass}" data-word-id="${wordId}">${part}</span>`;
+                wordIndex++;
+            } else {
+                // This is whitespace, preserve it
+                html += part;
+            }
+        });
+
+        return html;
+    }
+
+    isCurrentWord(wordIndex, fullText) {
+        if (!this.showCurrentWordCursor) return false;
+
+        // Count words up to the current cursor position
+        const textUpToCursor = this.textAccumulator;
+        const wordsUpToCursor = textUpToCursor.split(/\s+/).filter(word => word.trim()).length;
+
+        // The current word is the last word being typed
+        return wordIndex === Math.max(0, wordsUpToCursor - 1);
+    }
+
     addLineBreak() {
         // Finalize any accumulated text first
         this.finalizeAccumulatedText();
@@ -360,20 +388,35 @@ class BridgeViewer {
     }
 
     updateCurrentWordCursor() {
-        if (!this.lastTextElement) return;
+        if (!this.lastTextElement || !this.showCurrentWordCursor) return;
 
-        // Remove previous cursor
-        const existingCursor = this.elements.transcript.querySelector('.current-word-cursor');
-        if (existingCursor) {
-            existingCursor.classList.remove('current-word-cursor');
+        // Remove previous cursor from all word spans
+        const existingCursors = this.elements.transcript.querySelectorAll('.current-word-cursor');
+        existingCursors.forEach(cursor => {
+            cursor.classList.remove('current-word-cursor');
+        });
+
+        // Find the last word span in the current temporary element and highlight it
+        const wordSpans = this.lastTextElement.querySelectorAll('.word');
+        if (wordSpans.length > 0) {
+            const lastWord = wordSpans[wordSpans.length - 1];
+            lastWord.classList.add('current-word-cursor');
         }
+    }
 
-        // Add cursor to the temporary element
-        this.lastTextElement.parentElement.classList.add('current-word-cursor');
+    handleLineChange(lineData) {
+        // Line number command indicates a new line in Eclipse
+        // This is where Eclipse actually breaks lines, not on CR/LF characters
+
+        if (this.textAccumulator.trim()) {
+            // Add a line break to current accumulated text
+            this.textAccumulator += '<br>';
+            this.updateRealTimeDisplay();
+        }
     }
 
     handleFormatChange(formatData) {
-        // Format command indicates a new paragraph is starting
+        // Format command indicates a new paragraph is starting in Eclipse
         const newFormat = formatData.data.format;
 
         // If we have accumulated text and the format is changing, finalize the current paragraph
@@ -385,9 +428,7 @@ class BridgeViewer {
         this.currentParagraphFormat = newFormat;
 
         // Start a new paragraph for the new format
-        if (this.lastTextElement) {
-            this.startNewParagraph();
-        }
+        this.startNewParagraph();
     }
 
     startNewParagraph() {
@@ -398,9 +439,6 @@ class BridgeViewer {
 
         // Clear the temporary element so a new one will be created
         this.lastTextElement = null;
-
-        // Reset line break counter
-        this.lastLineBreakCount = 0;
     }
 
     matchesFilters(data) {
@@ -478,8 +516,8 @@ class BridgeViewer {
     processTextWithWordTracking(text, searchTerm) {
         if (!text) return '';
 
-        // First, convert line breaks to HTML
-        text = text.replace(/\r\n/g, '<br>').replace(/\r/g, '<br>').replace(/\n/g, '<br>');
+        // Note: Line breaks are already converted to <br> tags in real-time processing
+        // So we don't need to convert \r\n, \r, \n here - just process the existing <br> tags
 
         // Split text into words while preserving whitespace and line breaks
         const parts = text.split(/(\s+|<br>)/);
@@ -487,7 +525,7 @@ class BridgeViewer {
 
         parts.forEach((part, index) => {
             if (part === '<br>') {
-                // Preserve line breaks
+                // Preserve line breaks exactly as they were positioned in Eclipse
                 html += '<br>';
             } else if (part.trim() && part !== '<br>') {
                 // This is a word (not whitespace or line break)
@@ -501,7 +539,7 @@ class BridgeViewer {
 
                 html += wordHtml;
             } else {
-                // This is whitespace, preserve it (but not line breaks since those are handled above)
+                // This is whitespace, preserve it exactly as it appears in Eclipse
                 if (part !== '<br>') {
                     html += this.escapeHtml(part);
                 }
