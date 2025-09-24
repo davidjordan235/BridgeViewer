@@ -1,0 +1,82 @@
+The "LawBridge" protocol that Eclipse uses to communicate with its own
+Bridge program is as follows:
+
+Text is sent in ASCII format.
+
+Commands are sent as follows: 0x02 (command) 0x03 (it can also be
+represented as ^B (command) ^C)
+
+Some of the commands can contain extra data, and that data may contain
+the 0x02 and 0x03 values, so you definitely cannot look for 0x02 and
+then look for the next 0x03 to see when the command is complete. It will
+be necessary to look at the command letter to see how many characters of
+data are expected after that.
+
+Here is a list of the commands:
+
+P -- Page number. Followed by two bytes of data, which is a word
+containing the current page number (little-endian.)
+Example: 0x02 P 0x1D 0x02 0x03 (represents page number 0x021D, or 541)
+
+N -- Line number. Followed by one byte of data containing the line number
+Example: 0x02 N 0x12 0x03 (line number 0x12, or 18)
+
+F -- Format. Followed by one byte indicating the paragraph format. The
+formats are as follows:
+0x00: Fixed line
+0x01: Question
+0x02: Answer
+0x03: Speaker
+0x04: Question continuation
+0x05: Answer continuation
+0x06: Speaker continuation
+0x07: Parenthetical
+0x08: Centered
+0x09: Right-flush
+0x0A: By line
+0x0B: By line continuation
+0x0C+: User-defined
+Example: 0x02 F 0x03 0x03 (indicates that the following text is part of
+a speaker paragraph)
+This is one of those items that you can ignore, but it might be valuable
+to have some of this information. Most litigation support software has
+to guess what's a question or answer by searching for things like " Q. "
+in the text, which is an inexact science, at best. Using this data would
+allow you to have functions such as the ability jump back to the
+previous question, or to search for a speaker named "MR. JONES", etc.
+
+T -- Timecode. This is critical information and should be recorded. It's
+followed by four bytes of information for Hours, Minutes, Seconds and
+Frames (30ths of a second)
+Example: 0x02 T 0x11 0x05 0x0C 0x02 0x03 (17 hours, 5 minutes, 12
+seconds, 2 frames, [5:05 p.m.])
+
+D -- Delete (backspace). This removes the previous character from the data
+Example: 0x02 D 0x03
+
+K -- Prevent saving. This tells the client program that the attorney
+does not have permission to save the file
+Example: 0x02 K 0x03
+
+
+E -- End refresh (see below)
+
+R -- Refresh. Followed by 8 bytes: A starting timecode and an ending
+timecode. The timecode format is identical to the T command.
+The refresh command will be followed by a stream of text and commands
+which is in exactly the same format as the text would originally have
+been transmitted in. It will contain page/line commands, format
+commants, timecodes, etc. This text is intended to replace everything
+between the starting and ending timecodes.
+
+So when you get a refresh command, you have two choices concerning how
+to process it:
+
+1. Buffer all of the following text until the E command is received. At
+that point, delete everything between the timecodes and replace it with
+the buffered text. Then go back to receiving realtime data normally.
+
+2. Erase everything between the timecodes immediately. Insert the new
+text in realtime as it is transmitted (in the spot where the original
+text was deleted.) When the E command is received, go back to inserting
+realtime text at the bottom of the file.
