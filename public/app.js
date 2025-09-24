@@ -22,6 +22,8 @@ class BridgeViewer {
         this.currentWordElement = null;
         this.textAccumulator = ''; // Accumulate characters for real-time display
         this.lastTextElement = null; // Track the last text element for appending
+        this.lastLineBreakCount = 0; // Track consecutive line breaks
+        this.currentParagraphFormat = null; // Track current paragraph format
         this.colors = {
             question: '#fdf2f2',
             answer: '#f2f9f2',
@@ -194,6 +196,9 @@ class BridgeViewer {
                 this.handleRefreshStart(data);
             } else if (data.command === 'E' && data.data.action === 'endRefresh') {
                 this.handleRefreshEnd(data);
+            } else if (data.command === 'F') {
+                // Format change - this indicates a new paragraph
+                this.handleFormatChange(data);
             }
         }
 
@@ -211,14 +216,26 @@ class BridgeViewer {
 
         // Handle line breaks properly - convert CR/LF to actual line breaks
         if (char === '\r' || char === '\n') {
-            // If we have accumulated text, finalize it first
-            if (this.textAccumulator.trim()) {
-                this.finalizeAccumulatedText();
-            }
+            this.lastLineBreakCount++;
 
-            // Add line break
-            this.addLineBreak();
+            // Check if this is a paragraph break (double line break)
+            if (this.lastLineBreakCount >= 2) {
+                // This is a paragraph break - finalize current text and start new paragraph
+                if (this.textAccumulator.trim()) {
+                    this.finalizeAccumulatedText();
+                }
+                this.startNewParagraph();
+                this.lastLineBreakCount = 0;
+            } else {
+                // Single line break - just add a line break within the current paragraph
+                this.addLineBreak();
+            }
             return;
+        }
+
+        // Reset line break count when we get regular text
+        if (this.lastLineBreakCount > 0 && char.trim()) {
+            this.lastLineBreakCount = 0;
         }
 
         // Accumulate the character
@@ -231,14 +248,22 @@ class BridgeViewer {
     finalizeAccumulatedText() {
         if (!this.textAccumulator.trim()) return;
 
+        // Remove any temporary item first
+        const tempItem = this.elements.transcript.querySelector('.temp-item');
+        if (tempItem) {
+            tempItem.remove();
+        }
+
         // Apply filters to the accumulated text
         const textData = {
             type: 'text',
-            content: this.textAccumulator,
+            content: this.textAccumulator.trim(),
             page: this.transcriptData[this.transcriptData.length - 1]?.page || 0,
             line: this.transcriptData[this.transcriptData.length - 1]?.line || 0,
-            format: this.transcriptData[this.transcriptData.length - 1]?.format || 0,
-            timestamp: new Date()
+            format: this.currentParagraphFormat || 0,
+            formatDescription: this.getFormatDescription(this.currentParagraphFormat || 0),
+            timestamp: new Date(),
+            timecode: this.transcriptData[this.transcriptData.length - 1]?.timecode || null
         };
 
         // Only add if it matches filters
@@ -249,6 +274,24 @@ class BridgeViewer {
         // Clear the accumulator
         this.textAccumulator = '';
         this.lastTextElement = null;
+    }
+
+    getFormatDescription(formatCode) {
+        const formats = {
+            0x00: 'Fixed line',
+            0x01: 'Question',
+            0x02: 'Answer',
+            0x03: 'Speaker',
+            0x04: 'Question continuation',
+            0x05: 'Answer continuation',
+            0x06: 'Speaker continuation',
+            0x07: 'Parenthetical',
+            0x08: 'Centered',
+            0x09: 'Right-flush',
+            0x0A: 'By line',
+            0x0B: 'By line continuation'
+        };
+        return formats[formatCode] || `User-defined (0x${formatCode?.toString(16).padStart(2, '0') || '00'})`;
     }
 
     updateRealTimeDisplay() {
@@ -317,6 +360,37 @@ class BridgeViewer {
 
         // Add cursor to the temporary element
         this.lastTextElement.parentElement.classList.add('current-word-cursor');
+    }
+
+    handleFormatChange(formatData) {
+        // Format command indicates a new paragraph is starting
+        const newFormat = formatData.data.format;
+
+        // If we have accumulated text and the format is changing, finalize the current paragraph
+        if (this.textAccumulator.trim() && this.currentParagraphFormat !== newFormat) {
+            this.finalizeAccumulatedText();
+        }
+
+        // Update current paragraph format
+        this.currentParagraphFormat = newFormat;
+
+        // Start a new paragraph for the new format
+        if (this.lastTextElement) {
+            this.startNewParagraph();
+        }
+    }
+
+    startNewParagraph() {
+        // Finalize any current text
+        if (this.textAccumulator.trim()) {
+            this.finalizeAccumulatedText();
+        }
+
+        // Clear the temporary element so a new one will be created
+        this.lastTextElement = null;
+
+        // Reset line break counter
+        this.lastLineBreakCount = 0;
     }
 
     matchesFilters(data) {
