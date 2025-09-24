@@ -216,6 +216,12 @@ class BridgeViewer {
 
         // Handle line breaks properly - convert CR/LF to actual line breaks
         if (char === '\r' || char === '\n') {
+            // Add the line break to the accumulator immediately for real-time display
+            this.textAccumulator += '<br>';
+
+            // Update the display to show the line break immediately
+            this.updateRealTimeDisplay();
+
             this.lastLineBreakCount++;
 
             // Check if this is a paragraph break (double line break)
@@ -226,9 +232,6 @@ class BridgeViewer {
                 }
                 this.startNewParagraph();
                 this.lastLineBreakCount = 0;
-            } else {
-                // Single line break - just add a line break within the current paragraph
-                this.addLineBreak();
             }
             return;
         }
@@ -308,7 +311,7 @@ class BridgeViewer {
 
             const content = document.createElement('div');
             content.className = 'item-content';
-            content.textContent = this.textAccumulator;
+            content.innerHTML = this.escapeHtmlButKeepBr(this.textAccumulator);
 
             tempItem.appendChild(meta);
             tempItem.appendChild(content);
@@ -327,14 +330,21 @@ class BridgeViewer {
                 this.elements.transcript.scrollTop = this.elements.transcript.scrollHeight;
             }
         } else {
-            // Update existing temporary element
-            this.lastTextElement.textContent = this.textAccumulator;
+            // Update existing temporary element - use innerHTML to render <br> tags
+            this.lastTextElement.innerHTML = this.escapeHtmlButKeepBr(this.textAccumulator);
 
             // Update cursor position if enabled
             if (this.showCurrentWordCursor) {
                 this.updateCurrentWordCursor();
             }
         }
+    }
+
+    escapeHtmlButKeepBr(text) {
+        // Escape HTML but keep <br> tags for line breaks
+        return text.replace(/</g, '&lt;')
+                  .replace(/>/g, '&gt;')
+                  .replace(/&lt;br&gt;/g, '<br>'); // Keep <br> tags
     }
 
     addLineBreak() {
