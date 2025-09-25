@@ -12,6 +12,7 @@ class BridgeViewer {
         };
         this.currentSession = null;
         this.sidebarVisible = true;
+        this.wordIndexVisible = false; // Start hidden by default
         this.showTimestamps = true;
         this.showTimecodes = true;
         this.showPageNumbers = true;
@@ -31,6 +32,8 @@ class BridgeViewer {
             currentWord: '#ffeb3b'
         };
         this.speakerLabelColor = '#ff6b6b'; // Single color for all speaker labels
+        this.wordIndex = new Map(); // Store word index: word -> [{page, line, itemIndex}]
+        this.wordSearchTerm = '';
 
         this.initializeUI();
         this.loadSpeakerColors(); // Load saved speaker colors
@@ -45,6 +48,11 @@ class BridgeViewer {
             transcript: document.getElementById('transcript'),
             sidebar: document.querySelector('.sidebar'),
             sidebarToggle: document.getElementById('sidebarToggle'),
+            wordIndexPanel: document.querySelector('.word-index-panel'),
+            wordIndexToggle: document.getElementById('wordIndexToggle'),
+            wordList: document.getElementById('wordList'),
+            wordSearch: document.getElementById('wordSearch'),
+            wordCount: document.getElementById('wordCount'),
             clearBtn: document.getElementById('clearBtn'),
             pauseBtn: document.getElementById('pauseBtn'),
             resumeBtn: document.getElementById('resumeBtn'),
@@ -81,11 +89,17 @@ class BridgeViewer {
 
         // Initialize colors
         this.updateColors();
+
+        // Initialize word index panel state (start hidden)
+        this.initializeWordIndexState();
     }
 
     bindEvents() {
         // Sidebar toggle
         this.elements.sidebarToggle.addEventListener('click', () => this.toggleSidebar());
+
+        // Word index toggle
+        this.elements.wordIndexToggle.addEventListener('click', () => this.toggleWordIndex());
 
         // Control buttons
         this.elements.clearBtn.addEventListener('click', () => this.clearTranscript());
@@ -118,6 +132,12 @@ class BridgeViewer {
 
         // Test data
         this.elements.sendTestBtn.addEventListener('click', () => this.sendTestData());
+
+        // Word search
+        this.elements.wordSearch.addEventListener('input', () => this.filterWordIndex());
+        this.elements.wordSearch.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.filterWordIndex();
+        });
 
         // Auto-scroll control
         this.elements.transcript.addEventListener('scroll', () => {
@@ -269,6 +289,9 @@ class BridgeViewer {
         if (this.matchesFilters(textData) && this.matchesSearch(textData)) {
             this.addTranscriptItem(textData);
         }
+
+        // Add words to word index
+        this.addToWordIndex(textData, this.transcriptData.length - 1);
 
         // Clear the accumulator
         this.textAccumulator = '';
@@ -689,6 +712,7 @@ class BridgeViewer {
         this.elements.transcript.innerHTML = '<div class="transcript-placeholder">Transcript cleared. Waiting for new data...</div>';
         this.transcriptData = [];
         this.updateItemCount();
+        this.clearWordIndex();
     }
 
     pauseStream() {
@@ -722,8 +746,16 @@ class BridgeViewer {
         // Clear current transcript
         this.elements.transcript.innerHTML = '';
 
+        // Rebuild word index
+        this.clearWordIndex();
+
         // Reapply all data with current filters and search
-        this.transcriptData.forEach(data => {
+        this.transcriptData.forEach((data, index) => {
+            // Add to word index regardless of filters
+            if (data.type === 'text') {
+                this.addToWordIndex(data, index);
+            }
+
             // Only display text data (not commands) and apply filters
             if (data.type === 'text' && this.matchesFilters(data) && this.matchesSearch(data)) {
                 this.addTranscriptItem(data);
@@ -1176,6 +1208,271 @@ class BridgeViewer {
             this.elements.speakerLabelColor.value = saved;
             this.updateSpeakerPreview();
         }
+    }
+
+    // Word Index Management
+    initializeWordIndexState() {
+        // Set initial state - start hidden
+        if (this.wordIndexVisible) {
+            this.elements.wordIndexPanel.classList.remove('hidden');
+        } else {
+            this.elements.wordIndexPanel.classList.add('hidden');
+        }
+    }
+
+    toggleWordIndex() {
+        this.wordIndexVisible = !this.wordIndexVisible;
+
+        if (this.wordIndexVisible) {
+            this.elements.wordIndexPanel.classList.remove('hidden');
+            // Update button appearance to indicate panel is open
+            this.elements.wordIndexToggle.style.backgroundColor = 'rgba(255,255,255,0.3)';
+            this.elements.wordIndexToggle.title = 'Hide Word Index';
+        } else {
+            this.elements.wordIndexPanel.classList.add('hidden');
+            // Reset button appearance
+            this.elements.wordIndexToggle.style.backgroundColor = 'rgba(255,255,255,0.1)';
+            this.elements.wordIndexToggle.title = 'Show Word Index';
+        }
+    }
+
+    addToWordIndex(textData, itemIndex) {
+        if (!textData.content || textData.type !== 'text') return;
+
+        // Extract words from content (remove HTML tags and speaker labels first)
+        const cleanContent = textData.content
+            .replace(/<[^>]*>/g, '') // Remove HTML tags
+            .replace(/\s+/g, ' ') // Normalize whitespace
+            .trim();
+
+        if (!cleanContent) return;
+
+        // Split into words, filter out short words and common words
+        const words = cleanContent.toLowerCase()
+            .split(/[^\w']+/)
+            .filter(word => word.length >= 2 && !this.isCommonWord(word));
+
+        words.forEach(word => {
+            if (!this.wordIndex.has(word)) {
+                this.wordIndex.set(word, []);
+            }
+
+            const locations = this.wordIndex.get(word);
+            const location = {
+                page: textData.page || 0,
+                line: textData.line || 0,
+                itemIndex: itemIndex,
+                format: textData.format || 0
+            };
+
+            // Avoid duplicate locations
+            const exists = locations.some(loc =>
+                loc.page === location.page &&
+                loc.line === location.line &&
+                loc.itemIndex === location.itemIndex
+            );
+
+            if (!exists) {
+                locations.push(location);
+            }
+        });
+
+        // Update word count and refresh display
+        this.updateWordCount();
+        this.refreshWordIndex();
+    }
+
+    isCommonWord(word) {
+        const commonWords = new Set([
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+            'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have',
+            'has', 'had', 'will', 'would', 'could', 'should', 'may', 'might',
+            'can', 'do', 'does', 'did', 'get', 'got', 'go', 'went', 'come', 'came',
+            'say', 'said', 'see', 'saw', 'know', 'knew', 'think', 'thought',
+            'take', 'took', 'give', 'gave', 'make', 'made', 'find', 'found',
+            'tell', 'told', 'ask', 'asked', 'try', 'tried', 'use', 'used',
+            'work', 'worked', 'call', 'called', 'want', 'wanted', 'need', 'needed',
+            'feel', 'felt', 'become', 'became', 'leave', 'left', 'put', 'turn',
+            'turned', 'move', 'moved', 'like', 'look', 'looked', 'right', 'way',
+            'new', 'first', 'last', 'long', 'good', 'great', 'little', 'own',
+            'other', 'old', 'right', 'big', 'high', 'different', 'small', 'large',
+            'next', 'early', 'young', 'important', 'few', 'public', 'bad', 'same',
+            'able', 'um', 'uh', 'yeah', 'yes', 'no', 'okay', 'ok', 'well', 'so',
+            'now', 'then', 'here', 'there', 'where', 'when', 'why', 'how', 'what',
+            'who', 'which', 'this', 'that', 'these', 'those', 'my', 'your', 'his',
+            'her', 'its', 'our', 'their', 'me', 'you', 'him', 'her', 'us', 'them',
+            'i', 'we', 'he', 'she', 'it', 'they'
+        ]);
+        return commonWords.has(word.toLowerCase());
+    }
+
+    updateWordCount() {
+        this.elements.wordCount.textContent = this.wordIndex.size;
+    }
+
+    refreshWordIndex() {
+        this.filterWordIndex();
+    }
+
+    filterWordIndex() {
+        this.wordSearchTerm = this.elements.wordSearch.value.toLowerCase().trim();
+
+        // Get filtered and sorted words
+        const filteredWords = Array.from(this.wordIndex.keys())
+            .filter(word => {
+                return !this.wordSearchTerm || word.toLowerCase().includes(this.wordSearchTerm);
+            })
+            .sort((a, b) => a.localeCompare(b));
+
+        // Clear current word list
+        this.elements.wordList.innerHTML = '';
+
+        if (filteredWords.length === 0) {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'word-list-placeholder';
+            placeholder.textContent = this.wordSearchTerm ?
+                'No words match your search...' :
+                'Word index will appear here once transcript data is received...';
+            this.elements.wordList.appendChild(placeholder);
+            return;
+        }
+
+        // Create word items
+        filteredWords.forEach(word => {
+            const locations = this.wordIndex.get(word);
+            this.createWordItem(word, locations);
+        });
+    }
+
+    createWordItem(word, locations) {
+        const wordItem = document.createElement('div');
+        wordItem.className = 'word-item';
+
+        const wordText = document.createElement('div');
+        wordText.className = 'word-text';
+        wordText.textContent = word;
+
+        const wordLocations = document.createElement('div');
+        wordLocations.className = 'word-locations';
+
+        // Sort locations by page and line
+        const sortedLocations = locations.sort((a, b) => {
+            if (a.page !== b.page) return a.page - b.page;
+            return a.line - b.line;
+        });
+
+        sortedLocations.forEach(location => {
+            const locationSpan = document.createElement('span');
+            locationSpan.className = 'word-location';
+            locationSpan.textContent = `P${location.page}:L${location.line}`;
+            locationSpan.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.jumpToLocation(location);
+            });
+            wordLocations.appendChild(locationSpan);
+        });
+
+        wordItem.appendChild(wordText);
+        wordItem.appendChild(wordLocations);
+
+        // Click on word item to jump to first occurrence
+        wordItem.addEventListener('click', () => {
+            if (sortedLocations.length > 0) {
+                this.jumpToLocation(sortedLocations[0]);
+            }
+        });
+
+        this.elements.wordList.appendChild(wordItem);
+    }
+
+    jumpToLocation(location) {
+        // Clear any existing highlights first
+        this.clearWordIndexHighlights();
+
+        // Find the transcript item that contains text for the specified page and line
+        const transcriptItems = this.elements.transcript.querySelectorAll('.transcript-item');
+        let foundItem = null;
+        let targetLineText = null;
+
+        // Search through all transcript items to find one with matching page/line
+        for (let i = 0; i < transcriptItems.length; i++) {
+            const item = transcriptItems[i];
+            const pageLineInfo = item.querySelector('.page-line-info');
+
+            if (pageLineInfo) {
+                const text = pageLineInfo.textContent;
+                const match = text.match(/Page: (\d+), Line: (\d+)/);
+                if (match) {
+                    const page = parseInt(match[1]);
+                    const line = parseInt(match[2]);
+                    if (page === location.page && line === location.line) {
+                        foundItem = item;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Also try to find by itemIndex if direct search didn't work
+        if (!foundItem && location.itemIndex >= 0 && location.itemIndex < this.transcriptData.length) {
+            const targetData = this.transcriptData[location.itemIndex];
+            if (targetData && targetData.page === location.page && targetData.line === location.line) {
+                // Find the corresponding displayed item
+                const displayedItems = Array.from(transcriptItems);
+                foundItem = displayedItems[location.itemIndex] || null;
+            }
+        }
+
+        if (foundItem) {
+            // Scroll to the item
+            foundItem.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center'
+            });
+
+            this.highlightLineContent(foundItem);
+        }
+    }
+
+    clearWordIndexHighlights() {
+        // Remove all existing word-index highlights
+        const highlightedElements = this.elements.transcript.querySelectorAll('.word-index-highlight');
+        highlightedElements.forEach(element => {
+            element.style.backgroundColor = '';
+            element.classList.remove('word-index-highlight');
+        });
+
+        // Also clear any highlighted lines
+        const highlightedLines = this.elements.transcript.querySelectorAll('.highlighted-line');
+        highlightedLines.forEach(line => {
+            line.style.backgroundColor = '';
+            line.classList.remove('highlighted-line');
+        });
+    }
+
+    highlightLineContent(transcriptItem) {
+        const currentWordColor = this.colors.currentWord || '#ffeb3b';
+
+        // Get the content area of the transcript item
+        const contentArea = transcriptItem.querySelector('.item-content');
+        if (!contentArea) return;
+
+        // Since each transcript item typically represents one line/paragraph,
+        // highlight the entire content area
+        contentArea.style.backgroundColor = currentWordColor;
+        contentArea.classList.add('word-index-highlight', 'highlighted-line');
+
+        // Remove highlight after 3 seconds
+        setTimeout(() => {
+            contentArea.style.backgroundColor = '';
+            contentArea.classList.remove('word-index-highlight', 'highlighted-line');
+        }, 3000);
+    }
+
+    clearWordIndex() {
+        this.wordIndex.clear();
+        this.updateWordCount();
+        this.refreshWordIndex();
     }
 }
 

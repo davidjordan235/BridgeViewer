@@ -22,6 +22,7 @@
                 <div class="session-info" id="sessionInfo">
                     <span>No active session</span>
                 </div>
+                <button id="wordIndexToggle" class="sidebar-toggle" title="Toggle Word Index">☰</button>
             </div>
         </header>
 
@@ -175,6 +176,23 @@
                     </div>
                 </div>
             </main>
+
+            <aside class="word-index-panel">
+                <div class="word-index-header">
+                    <h3>Word Index</h3>
+                    <div class="word-index-stats">
+                        <span>Words: <span id="wordCount">0</span></span>
+                    </div>
+                </div>
+                <div class="word-search">
+                    <input type="text" id="wordSearch" placeholder="Search words..." class="word-search-input">
+                </div>
+                <div class="word-list" id="wordList">
+                    <div class="word-list-placeholder">
+                        Word index will appear here once transcript data is received...
+                    </div>
+                </div>
+            </aside>
         </div>
     </div>
 
