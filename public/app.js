@@ -34,9 +34,16 @@ class BridgeViewer {
         this.speakerLabelColor = '#ff6b6b'; // Single color for all speaker labels
         this.wordIndex = new Map(); // Store word index: word -> [{page, line, itemIndex}]
         this.wordSearchTerm = '';
+        this.annotations = []; // Store user annotations
+        this.keywords = new Map(); // Store keywords: keyword -> [{page, line, itemIndex}]
+        this.activeTab = 'words'; // Current active tab
+        this.selectedText = null; // Currently selected text for annotation
 
         this.initializeUI();
         this.loadSpeakerColors(); // Load saved speaker colors
+        this.loadFontSettings(); // Load saved font settings
+        this.loadAnnotationsFromStorage(); // Load saved annotations
+        this.loadKeywordsFromStorage(); // Load saved keywords
         this.connectWebSocket();
     }
 
@@ -53,6 +60,24 @@ class BridgeViewer {
             wordList: document.getElementById('wordList'),
             wordSearch: document.getElementById('wordSearch'),
             wordCount: document.getElementById('wordCount'),
+            // Tab navigation elements
+            indexTabs: document.querySelectorAll('.index-tab'),
+            indexTabContents: document.querySelectorAll('.index-tab-content'),
+            // Annotation elements
+            annotationList: document.getElementById('annotationList'),
+            annotationSearch: document.getElementById('annotationSearch'),
+            annotationCount: document.getElementById('annotationCount'),
+            addAnnotationBtn: document.getElementById('addAnnotationBtn'),
+            annotationModal: document.getElementById('annotationModal'),
+            annotationForm: document.getElementById('annotationForm'),
+            annotationText: document.getElementById('annotationText'),
+            cancelAnnotation: document.getElementById('cancelAnnotation'),
+            modalContext: document.getElementById('modalContext'),
+            // Keyword elements
+            keywordList: document.getElementById('keywordList'),
+            keywordSearch: document.getElementById('keywordSearch'),
+            keywordCount: document.getElementById('keywordCount'),
+            addKeywordBtn: document.getElementById('addKeywordBtn'),
             clearBtn: document.getElementById('clearBtn'),
             pauseBtn: document.getElementById('pauseBtn'),
             resumeBtn: document.getElementById('resumeBtn'),
@@ -74,6 +99,11 @@ class BridgeViewer {
             // Speaker color elements
             speakerLabelColor: document.getElementById('speakerLabelColor'),
             speakerPreview: document.getElementById('speakerPreview'),
+            // Font option elements
+            fontFamily: document.getElementById('fontFamily'),
+            fontSize: document.getElementById('fontSize'),
+            fontSizeValue: document.getElementById('fontSizeValue'),
+            fontPreview: document.getElementById('fontPreview'),
             currentPage: document.getElementById('currentPage'),
             currentLine: document.getElementById('currentLine'),
             currentFormat: document.getElementById('currentFormat'),
@@ -123,6 +153,10 @@ class BridgeViewer {
         // Speaker color management
         this.elements.speakerLabelColor.addEventListener('input', () => this.updateSpeakerLabelColor());
 
+        // Font controls
+        this.elements.fontFamily.addEventListener('change', () => this.updateFont());
+        this.elements.fontSize.addEventListener('input', () => this.updateFontSize());
+
         // Search and filters
         this.elements.searchBtn.addEventListener('click', () => this.performSearch());
         this.elements.searchInput.addEventListener('keypress', (e) => {
@@ -137,6 +171,37 @@ class BridgeViewer {
         this.elements.wordSearch.addEventListener('input', () => this.filterWordIndex());
         this.elements.wordSearch.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.filterWordIndex();
+        });
+
+        // Tab navigation
+        this.elements.indexTabs.forEach(tab => {
+            tab.addEventListener('click', () => this.switchTab(tab.dataset.tab));
+        });
+
+        // Annotation functionality
+        this.elements.addAnnotationBtn.addEventListener('click', () => this.showAnnotationModal());
+        this.elements.cancelAnnotation.addEventListener('click', () => this.hideAnnotationModal());
+        this.elements.annotationForm.addEventListener('submit', (e) => this.saveAnnotation(e));
+        this.elements.annotationSearch.addEventListener('input', () => this.filterAnnotations());
+        this.elements.annotationSearch.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.filterAnnotations();
+        });
+
+        // Keyword functionality
+        this.elements.addKeywordBtn.addEventListener('click', () => this.showAddKeywordDialog());
+        this.elements.keywordSearch.addEventListener('input', () => this.filterKeywords());
+        this.elements.keywordSearch.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.filterKeywords();
+        });
+
+        // Text selection for annotations
+        document.addEventListener('mouseup', () => this.handleTextSelection());
+
+        // Click outside modal to close
+        this.elements.annotationModal.addEventListener('click', (e) => {
+            if (e.target === this.elements.annotationModal) {
+                this.hideAnnotationModal();
+            }
         });
 
         // Auto-scroll control
@@ -271,12 +336,10 @@ class BridgeViewer {
             tempItem.remove();
         }
 
-        // Speaker detection is not needed - we apply one color to all speaker labels
-
-        // Apply filters to the accumulated text - preserve exact formatting including line breaks
+        // Create the finalized text data with current paragraph format
         const textData = {
             type: 'text',
-            content: this.textAccumulator, // Don't trim! Preserve exact Eclipse formatting
+            content: this.textAccumulator.trim(), // Trim whitespace but preserve internal formatting
             page: this.transcriptData[this.transcriptData.length - 1]?.page || 0,
             line: this.transcriptData[this.transcriptData.length - 1]?.line || 0,
             format: this.currentParagraphFormat || 0,
@@ -285,15 +348,15 @@ class BridgeViewer {
             timecode: this.transcriptData[this.transcriptData.length - 1]?.timecode || null
         };
 
-        // Only add if it matches filters
+        // Only add to display if it matches filters
         if (this.matchesFilters(textData) && this.matchesSearch(textData)) {
             this.addTranscriptItem(textData);
         }
 
-        // Add words to word index
-        this.addToWordIndex(textData, this.transcriptData.length - 1);
+        // Add words to word index (use current transcript length as index)
+        this.addToWordIndex(textData, this.transcriptData.length);
 
-        // Clear the accumulator
+        // Clear the accumulator for next paragraph
         this.textAccumulator = '';
         this.lastTextElement = null;
     }
@@ -474,15 +537,15 @@ class BridgeViewer {
         // Format command indicates a new paragraph is starting in Eclipse
         const newFormat = formatData.data.format;
 
-        // If we have accumulated text and the format is changing, finalize the current paragraph
-        if (this.textAccumulator.trim() && this.currentParagraphFormat !== newFormat) {
+        // If we have accumulated text, finalize the current paragraph first
+        if (this.textAccumulator.trim()) {
             this.finalizeAccumulatedText();
         }
 
         // Update current paragraph format
         this.currentParagraphFormat = newFormat;
 
-        // Start a new paragraph for the new format
+        // Start a new paragraph - this ensures each F command starts a new line/paragraph
         this.startNewParagraph();
     }
 
@@ -1208,6 +1271,67 @@ class BridgeViewer {
             this.elements.speakerLabelColor.value = saved;
             this.updateSpeakerPreview();
         }
+        // Update word index colors to match speaker colors
+        this.updateWordIndexColors();
+    }
+
+    // Font Management
+    updateFont() {
+        const fontFamily = this.elements.fontFamily.value;
+        const fontValue = fontFamily === 'system' ? 'inherit' : fontFamily;
+
+        // Update CSS custom property for transcript font
+        document.documentElement.style.setProperty('--transcript-font-family', fontValue);
+
+        // Update preview
+        this.updateFontPreview();
+
+        // Save to localStorage
+        localStorage.setItem('transcript-font-family', fontFamily);
+    }
+
+    updateFontSize() {
+        const fontSize = this.elements.fontSize.value;
+        this.elements.fontSizeValue.textContent = fontSize + 'px';
+
+        // Update CSS custom property for transcript font size
+        document.documentElement.style.setProperty('--transcript-font-size', fontSize + 'px');
+
+        // Update preview
+        this.updateFontPreview();
+
+        // Save to localStorage
+        localStorage.setItem('transcript-font-size', fontSize);
+    }
+
+    updateFontPreview() {
+        const fontFamily = this.elements.fontFamily.value;
+        const fontSize = this.elements.fontSize.value;
+        const fontValue = fontFamily === 'system' ? 'inherit' : fontFamily;
+
+        this.elements.fontPreview.style.fontFamily = fontValue;
+        this.elements.fontPreview.style.fontSize = fontSize + 'px';
+    }
+
+    loadFontSettings() {
+        // Load saved font family
+        const savedFontFamily = localStorage.getItem('transcript-font-family');
+        if (savedFontFamily) {
+            this.elements.fontFamily.value = savedFontFamily;
+            const fontValue = savedFontFamily === 'system' ? 'inherit' : savedFontFamily;
+            document.documentElement.style.setProperty('--transcript-font-family', fontValue);
+        }
+
+        // Load saved font size
+        const savedFontSize = localStorage.getItem('transcript-font-size');
+        if (savedFontSize) {
+            this.elements.fontSize.value = savedFontSize;
+            this.elements.fontSizeValue.textContent = savedFontSize + 'px';
+            document.documentElement.style.setProperty('--transcript-font-size', savedFontSize + 'px');
+        }
+
+        // Update preview
+        this.updateFontPreview();
     }
 
     // Word Index Management
@@ -1442,30 +1566,49 @@ class BridgeViewer {
             element.classList.remove('word-index-highlight');
         });
 
-        // Also clear any highlighted lines
+        // Also clear any highlighted lines (both transcript items and content areas)
         const highlightedLines = this.elements.transcript.querySelectorAll('.highlighted-line');
         highlightedLines.forEach(line => {
             line.style.backgroundColor = '';
             line.classList.remove('highlighted-line');
+        });
+
+        // Clear background color from all transcript items that might have been highlighted
+        const transcriptItems = this.elements.transcript.querySelectorAll('.transcript-item');
+        transcriptItems.forEach(item => {
+            if (item.style.backgroundColor === this.colors.currentWord || item.classList.contains('word-index-highlight')) {
+                item.style.backgroundColor = '';
+                item.classList.remove('word-index-highlight', 'highlighted-line');
+            }
         });
     }
 
     highlightLineContent(transcriptItem) {
         const currentWordColor = this.colors.currentWord || '#ffeb3b';
 
-        // Get the content area of the transcript item
-        const contentArea = transcriptItem.querySelector('.item-content');
-        if (!contentArea) return;
+        // Get the entire transcript item (not just content area)
+        if (!transcriptItem) return;
 
-        // Since each transcript item typically represents one line/paragraph,
-        // highlight the entire content area
-        contentArea.style.backgroundColor = currentWordColor;
-        contentArea.classList.add('word-index-highlight', 'highlighted-line');
+        // Highlight the entire transcript item (including meta and content areas)
+        transcriptItem.style.backgroundColor = currentWordColor;
+        transcriptItem.classList.add('word-index-highlight', 'highlighted-line');
+
+        // Also highlight the content area specifically for better visibility
+        const contentArea = transcriptItem.querySelector('.item-content');
+        if (contentArea) {
+            contentArea.style.backgroundColor = currentWordColor;
+            contentArea.classList.add('word-index-highlight');
+        }
 
         // Remove highlight after 3 seconds
         setTimeout(() => {
-            contentArea.style.backgroundColor = '';
-            contentArea.classList.remove('word-index-highlight', 'highlighted-line');
+            transcriptItem.style.backgroundColor = '';
+            transcriptItem.classList.remove('word-index-highlight', 'highlighted-line');
+
+            if (contentArea) {
+                contentArea.style.backgroundColor = '';
+                contentArea.classList.remove('word-index-highlight');
+            }
         }, 3000);
     }
 
@@ -1473,6 +1616,695 @@ class BridgeViewer {
         this.wordIndex.clear();
         this.updateWordCount();
         this.refreshWordIndex();
+    }
+
+    // Tab Management Functions
+    switchTab(tabName) {
+        this.activeTab = tabName;
+
+        // Update tab appearance
+        this.elements.indexTabs.forEach(tab => {
+            if (tab.dataset.tab === tabName) {
+                tab.classList.add('active');
+            } else {
+                tab.classList.remove('active');
+            }
+        });
+
+        // Show/hide tab content
+        this.elements.indexTabContents.forEach(content => {
+            if (content.id === `${tabName}-tab`) {
+                content.classList.add('active');
+            } else {
+                content.classList.remove('active');
+            }
+        });
+
+        // Refresh the active tab's content
+        switch (tabName) {
+            case 'words':
+                this.refreshWordIndex();
+                break;
+            case 'annotations':
+                this.refreshAnnotations();
+                break;
+            case 'keywords':
+                this.refreshKeywords();
+                break;
+        }
+    }
+
+    // Annotation Management
+    showAnnotationModal(selectedText = null, location = null) {
+        this.selectedText = selectedText;
+        this.selectedLocation = location;
+
+        if (selectedText) {
+            this.elements.modalContext.textContent = `Selected text: "${selectedText}"`;
+        } else {
+            this.elements.modalContext.textContent = 'General annotation for current transcript position';
+        }
+
+        this.elements.annotationText.value = '';
+        this.elements.annotationModal.classList.add('show');
+        this.elements.annotationText.focus();
+    }
+
+    hideAnnotationModal() {
+        this.elements.annotationModal.classList.remove('show');
+        this.selectedText = null;
+        this.selectedLocation = null;
+    }
+
+    saveAnnotation(e) {
+        e.preventDefault();
+        const text = this.elements.annotationText.value.trim();
+        if (!text) return;
+
+        const annotation = {
+            id: Date.now(),
+            text: text,
+            selectedText: this.selectedText,
+            location: this.selectedLocation || this.getCurrentLocation(),
+            timestamp: new Date(),
+            page: this.getCurrentPage(),
+            line: this.getCurrentLine()
+        };
+
+        this.annotations.push(annotation);
+        this.updateAnnotationCount();
+        this.refreshAnnotations();
+        this.hideAnnotationModal();
+        this.saveAnnotationsToStorage();
+    }
+
+    getCurrentLocation() {
+        // Get current scroll position or last viewed item
+        const items = this.elements.transcript.querySelectorAll('.transcript-item');
+        if (items.length > 0) {
+            const lastItem = items[items.length - 1];
+            return {
+                page: this.getCurrentPage(),
+                line: this.getCurrentLine(),
+                element: lastItem
+            };
+        }
+        return null;
+    }
+
+    getCurrentPage() {
+        return this.transcriptData.length > 0 ? this.transcriptData[this.transcriptData.length - 1].page : 0;
+    }
+
+    getCurrentLine() {
+        return this.transcriptData.length > 0 ? this.transcriptData[this.transcriptData.length - 1].line : 0;
+    }
+
+    updateAnnotationCount() {
+        this.elements.annotationCount.textContent = this.annotations.length;
+    }
+
+    refreshAnnotations() {
+        this.filterAnnotations();
+    }
+
+    filterAnnotations() {
+        const searchTerm = this.elements.annotationSearch.value.toLowerCase().trim();
+
+        // Filter annotations
+        const filteredAnnotations = this.annotations.filter(annotation => {
+            return !searchTerm ||
+                   annotation.text.toLowerCase().includes(searchTerm) ||
+                   (annotation.selectedText && annotation.selectedText.toLowerCase().includes(searchTerm));
+        });
+
+        // Clear current annotation list
+        this.elements.annotationList.innerHTML = '';
+
+        if (filteredAnnotations.length === 0) {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'tab-list-placeholder';
+            placeholder.textContent = searchTerm ?
+                'No annotations match your search...' :
+                'Click "+ Add Note" to create annotations or right-click on transcript text...';
+            this.elements.annotationList.appendChild(placeholder);
+            return;
+        }
+
+        // Create annotation items (sort by newest first)
+        filteredAnnotations.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+            .forEach(annotation => {
+                this.createAnnotationItem(annotation);
+            });
+    }
+
+    createAnnotationItem(annotation) {
+        const annotationItem = document.createElement('div');
+        annotationItem.className = 'annotation-item';
+
+        const header = document.createElement('div');
+        header.className = 'annotation-header';
+
+        const location = document.createElement('div');
+        location.className = 'annotation-location';
+        location.textContent = `P${annotation.page || 0}:L${annotation.line || 0}`;
+
+        const timestamp = document.createElement('div');
+        timestamp.className = 'annotation-timestamp';
+        timestamp.textContent = new Date(annotation.timestamp).toLocaleString();
+
+        header.appendChild(location);
+        header.appendChild(timestamp);
+
+        const content = document.createElement('div');
+        content.className = 'annotation-content';
+        content.textContent = annotation.text;
+
+        const actions = document.createElement('div');
+        actions.className = 'annotation-actions';
+
+        const jumpBtn = document.createElement('button');
+        jumpBtn.className = 'annotation-action';
+        jumpBtn.textContent = 'Jump to Location';
+        jumpBtn.addEventListener('click', () => {
+            if (annotation.location) {
+                this.jumpToLocation(annotation.location);
+            }
+        });
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'annotation-action delete';
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.addEventListener('click', () => {
+            this.deleteAnnotation(annotation.id);
+        });
+
+        actions.appendChild(jumpBtn);
+        actions.appendChild(deleteBtn);
+
+        annotationItem.appendChild(header);
+        annotationItem.appendChild(content);
+
+        if (annotation.selectedText) {
+            const context = document.createElement('div');
+            context.className = 'annotation-context';
+            context.textContent = `"${annotation.selectedText}"`;
+            annotationItem.appendChild(context);
+        }
+
+        annotationItem.appendChild(actions);
+
+        // Click to jump to location
+        annotationItem.addEventListener('click', () => {
+            if (annotation.location) {
+                this.jumpToLocation(annotation.location);
+            }
+        });
+
+        this.elements.annotationList.appendChild(annotationItem);
+    }
+
+    deleteAnnotation(id) {
+        this.annotations = this.annotations.filter(annotation => annotation.id !== id);
+        this.updateAnnotationCount();
+        this.refreshAnnotations();
+        this.saveAnnotationsToStorage();
+    }
+
+    handleTextSelection() {
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0 && selection.toString().trim()) {
+            const selectedText = selection.toString().trim();
+            if (selectedText.length > 3) {
+                // Show context menu or automatically show annotation modal
+                // For now, we'll just store the selection
+                this.lastSelection = {
+                    text: selectedText,
+                    location: this.getCurrentLocation()
+                };
+            }
+        }
+    }
+
+    // Keyword Management
+    showAddKeywordDialog() {
+        const keyword = prompt('Enter a keyword to track:');
+        if (keyword && keyword.trim()) {
+            this.addKeyword(keyword.trim());
+        }
+    }
+
+    addKeyword(keyword) {
+        const normalizedKeyword = keyword.toLowerCase();
+        if (!this.keywords.has(normalizedKeyword)) {
+            this.keywords.set(normalizedKeyword, []);
+        }
+
+        // Search existing transcript for this keyword
+        this.transcriptData.forEach((item, index) => {
+            if (item.type === 'text' && item.content.toLowerCase().includes(normalizedKeyword)) {
+                const keywordData = this.keywords.get(normalizedKeyword);
+                keywordData.push({
+                    page: item.page || 0,
+                    line: item.line || 0,
+                    itemIndex: index,
+                    context: item.content.substring(0, 100),
+                    timecode: item.timecode
+                });
+            }
+        });
+
+        this.updateKeywordCount();
+        this.refreshKeywords();
+        this.saveKeywordsToStorage();
+    }
+
+    updateKeywordCount() {
+        this.elements.keywordCount.textContent = this.keywords.size;
+    }
+
+    refreshKeywords() {
+        this.filterKeywords();
+    }
+
+    filterKeywords() {
+        const searchTerm = this.elements.keywordSearch.value.toLowerCase().trim();
+
+        // Get filtered keywords
+        const filteredKeywords = Array.from(this.keywords.keys())
+            .filter(keyword => {
+                return !searchTerm || keyword.includes(searchTerm);
+            })
+            .sort();
+
+        // Clear current keyword list
+        this.elements.keywordList.innerHTML = '';
+
+        if (filteredKeywords.length === 0) {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'tab-list-placeholder';
+            placeholder.textContent = searchTerm ?
+                'No keywords match your search...' :
+                'Keywords will appear here once added or extracted from transcript...';
+            this.elements.keywordList.appendChild(placeholder);
+            return;
+        }
+
+        // Create keyword items
+        filteredKeywords.forEach(keyword => {
+            const keywordData = this.keywords.get(keyword);
+            this.createKeywordItem(keyword, keywordData);
+        });
+    }
+
+    createKeywordItem(keyword, keywordData) {
+        const keywordItem = document.createElement('div');
+        keywordItem.className = 'keyword-item';
+
+        const keywordText = document.createElement('div');
+        keywordText.className = 'keyword-text';
+        keywordText.textContent = keyword;
+
+        const keywordStats = document.createElement('div');
+        keywordStats.className = 'keyword-stats';
+
+        const countSpan = document.createElement('span');
+        countSpan.className = 'keyword-count';
+        countSpan.textContent = `${keywordData.length} occurrences`;
+
+        keywordStats.appendChild(countSpan);
+
+        keywordItem.appendChild(keywordText);
+        keywordItem.appendChild(keywordStats);
+
+        // Create occurrences list
+        if (keywordData.length > 0) {
+            const occurrences = document.createElement('div');
+            occurrences.className = 'keyword-occurrences';
+
+            keywordData.sort((a, b) => {
+                if (a.page !== b.page) return a.page - b.page;
+                return a.line - b.line;
+            }).forEach(occurrence => {
+                const occurrenceSpan = document.createElement('span');
+                occurrenceSpan.className = 'keyword-occurrence';
+                occurrenceSpan.textContent = `P${occurrence.page}:L${occurrence.line}`;
+                occurrenceSpan.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.jumpToLocation(occurrence);
+                });
+                occurrences.appendChild(occurrenceSpan);
+            });
+
+            keywordItem.appendChild(occurrences);
+        }
+
+        // Click on keyword to jump to first occurrence
+        keywordItem.addEventListener('click', () => {
+            if (keywordData.length > 0) {
+                this.jumpToLocation(keywordData[0]);
+            }
+        });
+
+        this.elements.keywordList.appendChild(keywordItem);
+    }
+
+    // Auto-detect keywords from transcript
+    addToKeywordIndex(textData, itemIndex) {
+        if (!textData.content || textData.type !== 'text') return;
+
+        // Check existing keywords for matches
+        this.keywords.forEach((locations, keyword) => {
+            if (textData.content.toLowerCase().includes(keyword)) {
+                const keywordData = this.keywords.get(keyword);
+                keywordData.push({
+                    page: textData.page || 0,
+                    line: textData.line || 0,
+                    itemIndex: itemIndex,
+                    context: textData.content.substring(0, 100),
+                    timecode: textData.timecode
+                });
+            }
+        });
+
+        if (this.activeTab === 'keywords') {
+            this.refreshKeywords();
+        }
+    }
+
+    // Storage functions
+    saveAnnotationsToStorage() {
+        try {
+            localStorage.setItem('bridgeViewer_annotations', JSON.stringify(this.annotations));
+        } catch (e) {
+            console.warn('Could not save annotations to localStorage');
+        }
+    }
+
+    loadAnnotationsFromStorage() {
+        try {
+            const stored = localStorage.getItem('bridgeViewer_annotations');
+            if (stored) {
+                this.annotations = JSON.parse(stored);
+                this.updateAnnotationCount();
+                this.refreshAnnotations();
+            }
+        } catch (e) {
+            console.warn('Could not load annotations from localStorage');
+        }
+    }
+
+    saveKeywordsToStorage() {
+        try {
+            const keywordsArray = Array.from(this.keywords.entries());
+            localStorage.setItem('bridgeViewer_keywords', JSON.stringify(keywordsArray));
+        } catch (e) {
+            console.warn('Could not save keywords to localStorage');
+        }
+    }
+
+    loadKeywordsFromStorage() {
+        try {
+            const stored = localStorage.getItem('bridgeViewer_keywords');
+            if (stored) {
+                const keywordsArray = JSON.parse(stored);
+                this.keywords = new Map(keywordsArray);
+                this.updateKeywordCount();
+                this.refreshKeywords();
+            }
+        } catch (e) {
+            console.warn('Could not load keywords from localStorage');
+        }
+    }
+
+    // Original Word Index Management (restored)
+    addToWordIndex(textData, itemIndex) {
+        if (!textData.content || textData.type !== 'text') return;
+
+        // Extract words from content (remove HTML tags and speaker labels first)
+        const cleanContent = textData.content
+            .replace(/<[^>]*>/g, '') // Remove HTML tags
+            .replace(/\s+/g, ' ') // Normalize whitespace
+            .trim();
+
+        if (!cleanContent) return;
+
+        // Split into words, filter out short words and common words
+        const words = cleanContent.toLowerCase()
+            .split(/[^\w']+/)
+            .filter(word => word.length >= 2 && !this.isCommonWord(word));
+
+        words.forEach(word => {
+            if (!this.wordIndex.has(word)) {
+                this.wordIndex.set(word, []);
+            }
+
+            const locations = this.wordIndex.get(word);
+            const location = {
+                page: textData.page || 0,
+                line: textData.line || 0,
+                itemIndex: itemIndex,
+                format: textData.format || 0
+            };
+
+            // Avoid duplicate locations
+            const exists = locations.some(loc =>
+                loc.page === location.page &&
+                loc.line === location.line &&
+                loc.itemIndex === location.itemIndex
+            );
+
+            if (!exists) {
+                locations.push(location);
+            }
+        });
+
+        // Update word count and refresh display
+        this.updateWordCount();
+        if (this.activeTab === 'words') {
+            this.refreshWordIndex();
+        }
+
+        // Also add to keyword index
+        this.addToKeywordIndex(textData, itemIndex);
+    }
+
+    isCommonWord(word) {
+        const commonWords = new Set([
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+            'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have',
+            'has', 'had', 'will', 'would', 'could', 'should', 'may', 'might',
+            'can', 'do', 'does', 'did', 'get', 'got', 'go', 'went', 'come', 'came',
+            'say', 'said', 'see', 'saw', 'know', 'knew', 'think', 'thought',
+            'take', 'took', 'give', 'gave', 'make', 'made', 'find', 'found',
+            'tell', 'told', 'ask', 'asked', 'try', 'tried', 'use', 'used',
+            'work', 'worked', 'call', 'called', 'want', 'wanted', 'need', 'needed',
+            'feel', 'felt', 'become', 'became', 'leave', 'left', 'put', 'turn',
+            'turned', 'move', 'moved', 'like', 'look', 'looked', 'right', 'way',
+            'new', 'first', 'last', 'long', 'good', 'great', 'little', 'own',
+            'other', 'old', 'right', 'big', 'high', 'different', 'small', 'large',
+            'next', 'early', 'young', 'important', 'few', 'public', 'bad', 'same',
+            'able', 'um', 'uh', 'yeah', 'yes', 'no', 'okay', 'ok', 'well', 'so',
+            'now', 'then', 'here', 'there', 'where', 'when', 'why', 'how', 'what',
+            'who', 'which', 'this', 'that', 'these', 'those', 'my', 'your', 'his',
+            'her', 'its', 'our', 'their', 'me', 'you', 'him', 'her', 'us', 'them',
+            'i', 'we', 'he', 'she', 'it', 'they'
+        ]);
+        return commonWords.has(word.toLowerCase());
+    }
+
+    updateWordCount() {
+        this.elements.wordCount.textContent = this.wordIndex.size;
+    }
+
+    refreshWordIndex() {
+        this.filterWordIndex();
+    }
+
+    filterWordIndex() {
+        this.wordSearchTerm = this.elements.wordSearch.value.toLowerCase().trim();
+
+        // Get filtered words
+        const filteredWords = Array.from(this.wordIndex.keys())
+            .filter(word => {
+                return !this.wordSearchTerm || word.toLowerCase().includes(this.wordSearchTerm);
+            });
+
+        // Clear current word list
+        this.elements.wordList.innerHTML = '';
+
+        if (filteredWords.length === 0) {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'tab-list-placeholder';
+            placeholder.textContent = this.wordSearchTerm ?
+                'No words match your search...' :
+                'Word index will appear here once transcript data is received...';
+            this.elements.wordList.appendChild(placeholder);
+            return;
+        }
+
+        // Group words by first letter
+        const wordsByLetter = new Map();
+        filteredWords.forEach(word => {
+            const firstLetter = word.charAt(0).toUpperCase();
+            if (!wordsByLetter.has(firstLetter)) {
+                wordsByLetter.set(firstLetter, []);
+            }
+            wordsByLetter.get(firstLetter).push(word);
+        });
+
+        // Sort letters and create alphabetical sections
+        const sortedLetters = Array.from(wordsByLetter.keys()).sort();
+
+        sortedLetters.forEach(letter => {
+            const words = wordsByLetter.get(letter).sort((a, b) => a.localeCompare(b));
+            this.createAlphabetSection(letter, words);
+        });
+
+        // Update colors to match current speaker label color
+        this.updateWordIndexColors();
+    }
+
+    createWordItem(word, locations) {
+        const wordItem = document.createElement('div');
+        wordItem.className = 'word-item';
+
+        const wordText = document.createElement('div');
+        wordText.className = 'word-text';
+        wordText.textContent = word;
+
+        const wordLocations = document.createElement('div');
+        wordLocations.className = 'word-locations';
+
+        // Sort locations by page and line
+        const sortedLocations = locations.sort((a, b) => {
+            if (a.page !== b.page) return a.page - b.page;
+            return a.line - b.line;
+        });
+
+        sortedLocations.forEach(location => {
+            const locationSpan = document.createElement('span');
+            locationSpan.className = 'word-location';
+            locationSpan.textContent = `P${location.page}:L${location.line}`;
+            locationSpan.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.jumpToLocation(location);
+            });
+            wordLocations.appendChild(locationSpan);
+        });
+
+        wordItem.appendChild(wordText);
+        wordItem.appendChild(wordLocations);
+
+        // Click on word item to jump to first occurrence
+        wordItem.addEventListener('click', () => {
+            if (sortedLocations.length > 0) {
+                this.jumpToLocation(sortedLocations[0]);
+            }
+        });
+
+        return wordItem;
+    }
+
+    createAlphabetSection(letter, words) {
+        const alphabetSection = document.createElement('div');
+        alphabetSection.className = 'alphabet-section';
+
+        const letterHeader = document.createElement('div');
+        letterHeader.className = 'alphabet-header';
+
+        const letterToggle = document.createElement('span');
+        letterToggle.className = 'alphabet-toggle';
+        letterToggle.textContent = '▶'; // Right arrow (collapsed by default)
+
+        const letterText = document.createElement('span');
+        letterText.className = 'alphabet-letter';
+        letterText.textContent = letter;
+
+        const wordCount = document.createElement('span');
+        wordCount.className = 'alphabet-count';
+        wordCount.textContent = `(${words.length})`;
+
+        letterHeader.appendChild(letterToggle);
+        letterHeader.appendChild(letterText);
+        letterHeader.appendChild(wordCount);
+
+        const wordsList = document.createElement('div');
+        wordsList.className = 'alphabet-words collapsed'; // Start collapsed by default
+
+        // Add words to the section
+        words.forEach(word => {
+            const locations = this.wordIndex.get(word);
+            const wordItem = this.createWordItem(word, locations);
+            wordsList.appendChild(wordItem);
+        });
+
+        // Toggle functionality
+        letterHeader.addEventListener('click', () => {
+            const isCollapsed = wordsList.classList.contains('collapsed');
+
+            if (isCollapsed) {
+                wordsList.classList.remove('collapsed');
+                letterToggle.textContent = '▼'; // Down arrow (expanded)
+            } else {
+                wordsList.classList.add('collapsed');
+                letterToggle.textContent = '▶'; // Right arrow (collapsed)
+            }
+        });
+
+        alphabetSection.appendChild(letterHeader);
+        alphabetSection.appendChild(wordsList);
+
+        this.elements.wordList.appendChild(alphabetSection);
+    }
+
+    clearWordIndex() {
+        this.wordIndex.clear();
+        this.updateWordCount();
+        this.refreshWordIndex();
+    }
+
+    updateWordIndexColors() {
+        // Update word index colors to match current speaker label color
+        const speakerColor = this.speakerLabelColor;
+
+        // Calculate lighter and darker versions of the speaker color
+        const lightColor = this.lightenColor(speakerColor, 0.9); // Very light for borders/backgrounds
+        const darkColor = this.darkenColor(speakerColor, 0.15);  // Darker for hover states
+
+        // Update CSS custom properties for word index
+        document.documentElement.style.setProperty('--word-index-primary', speakerColor);
+        document.documentElement.style.setProperty('--word-index-light', lightColor);
+        document.documentElement.style.setProperty('--word-index-dark', darkColor);
+        document.documentElement.style.setProperty('--word-index-hover-bg', this.lightenColor(speakerColor, 0.95));
+    }
+
+    // Helper function to lighten a hex color
+    lightenColor(hex, percent) {
+        // Remove the # if present
+        hex = hex.replace(/^#/, '');
+
+        // Parse the color
+        const num = parseInt(hex, 16);
+        const r = (num >> 16) + Math.round((255 - (num >> 16)) * percent);
+        const g = ((num >> 8) & 0x00FF) + Math.round((255 - ((num >> 8) & 0x00FF)) * percent);
+        const b = (num & 0x0000FF) + Math.round((255 - (num & 0x0000FF)) * percent);
+
+        return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+    }
+
+    // Helper function to darken a hex color
+    darkenColor(hex, percent) {
+        // Remove the # if present
+        hex = hex.replace(/^#/, '');
+
+        // Parse the color
+        const num = parseInt(hex, 16);
+        const r = Math.round((num >> 16) * (1 - percent));
+        const g = Math.round(((num >> 8) & 0x00FF) * (1 - percent));
+        const b = Math.round((num & 0x0000FF) * (1 - percent));
+
+        return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
     }
 }
 

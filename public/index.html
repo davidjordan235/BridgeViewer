@@ -64,6 +64,36 @@
                         </div>
                     </div>
 
+                    <div class="font-options">
+                        <h4>Font Options</h4>
+                        <div class="option-group">
+                            <label for="fontFamily">Font Style:</label>
+                            <select id="fontFamily" class="font-select">
+                                <option value="system">System Default</option>
+                                <option value="Arial, sans-serif">Arial</option>
+                                <option value="Helvetica, sans-serif">Helvetica</option>
+                                <option value="'Times New Roman', serif">Times New Roman</option>
+                                <option value="'Courier New', monospace">Courier New</option>
+                                <option value="Georgia, serif">Georgia</option>
+                                <option value="Verdana, sans-serif">Verdana</option>
+                                <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                                <option value="'Comic Sans MS', cursive">Comic Sans MS</option>
+                                <option value="Impact, sans-serif">Impact</option>
+                                <option value="'Palatino Linotype', serif">Palatino</option>
+                            </select>
+                        </div>
+                        <div class="option-group">
+                            <label for="fontSize">Font Size:</label>
+                            <div class="font-size-controls">
+                                <input type="range" id="fontSize" min="10" max="24" value="14" class="font-size-slider">
+                                <span id="fontSizeValue" class="font-size-display">14px</span>
+                            </div>
+                        </div>
+                        <div class="font-preview" id="fontPreview">
+                            Sample transcript text preview
+                        </div>
+                    </div>
+
                     <div class="color-options">
                         <h4>Paragraph Colors</h4>
                         <div class="color-group">
@@ -179,20 +209,90 @@
 
             <aside class="word-index-panel">
                 <div class="word-index-header">
-                    <h3>Word Index</h3>
-                    <div class="word-index-stats">
-                        <span>Words: <span id="wordCount">0</span></span>
+                    <h3>Index</h3>
+                </div>
+
+                <!-- Tab Navigation -->
+                <div class="index-tabs">
+                    <button class="index-tab active" data-tab="words">Words</button>
+                    <button class="index-tab" data-tab="annotations">Annotations</button>
+                    <button class="index-tab" data-tab="keywords">Keywords</button>
+                </div>
+
+                <!-- Words Tab -->
+                <div class="index-tab-content active" id="words-tab">
+                    <div class="tab-header">
+                        <div class="tab-stats">
+                            <span>Words: <span id="wordCount">0</span></span>
+                        </div>
+                        <div class="tab-search">
+                            <input type="text" id="wordSearch" placeholder="Search words..." class="search-input">
+                        </div>
+                    </div>
+                    <div class="tab-list" id="wordList">
+                        <div class="tab-list-placeholder">
+                            Word index will appear here once transcript data is received...
+                        </div>
                     </div>
                 </div>
-                <div class="word-search">
-                    <input type="text" id="wordSearch" placeholder="Search words..." class="word-search-input">
+
+                <!-- Annotations Tab -->
+                <div class="index-tab-content" id="annotations-tab">
+                    <div class="tab-header">
+                        <div class="tab-stats">
+                            <span>Annotations: <span id="annotationCount">0</span></span>
+                        </div>
+                        <div class="tab-search">
+                            <input type="text" id="annotationSearch" placeholder="Search annotations..." class="search-input">
+                        </div>
+                        <div class="tab-controls">
+                            <button id="addAnnotationBtn" class="btn btn-small">+ Add Note</button>
+                        </div>
+                    </div>
+                    <div class="tab-list" id="annotationList">
+                        <div class="tab-list-placeholder">
+                            Click "+ Add Note" to create annotations or right-click on transcript text...
+                        </div>
+                    </div>
                 </div>
-                <div class="word-list" id="wordList">
-                    <div class="word-list-placeholder">
-                        Word index will appear here once transcript data is received...
+
+                <!-- Keywords Tab -->
+                <div class="index-tab-content" id="keywords-tab">
+                    <div class="tab-header">
+                        <div class="tab-stats">
+                            <span>Keywords: <span id="keywordCount">0</span></span>
+                        </div>
+                        <div class="tab-search">
+                            <input type="text" id="keywordSearch" placeholder="Search keywords..." class="search-input">
+                        </div>
+                        <div class="tab-controls">
+                            <button id="addKeywordBtn" class="btn btn-small">+ Add Keyword</button>
+                        </div>
+                    </div>
+                    <div class="tab-list" id="keywordList">
+                        <div class="tab-list-placeholder">
+                            Keywords will appear here once added or extracted from transcript...
+                        </div>
                     </div>
                 </div>
             </aside>
+        </div>
+    </div>
+
+    <!-- Annotation Modal -->
+    <div class="annotation-modal" id="annotationModal">
+        <div class="annotation-modal-content">
+            <h3>Add Annotation</h3>
+            <div class="modal-context" id="modalContext">
+                Context will appear here...
+            </div>
+            <form class="annotation-form" id="annotationForm">
+                <textarea id="annotationText" placeholder="Enter your annotation..." required></textarea>
+                <div class="annotation-form-actions">
+                    <button type="button" id="cancelAnnotation" class="btn btn-secondary">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Note</button>
+                </div>
+            </form>
         </div>
     </div>
 
