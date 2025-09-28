@@ -111,7 +111,12 @@ class BridgeViewer {
             testData: document.getElementById('testData'),
             sendTestBtn: document.getElementById('sendTestBtn'),
             itemCount: document.getElementById('itemCount'),
-            lastUpdate: document.getElementById('lastUpdate')
+            lastUpdate: document.getElementById('lastUpdate'),
+            followCursorBtn: document.getElementById('followCursorBtn'),
+            // Context menu elements
+            contextMenu: document.getElementById('contextMenu'),
+            annotateText: document.getElementById('annotateText'),
+            addToKeywords: document.getElementById('addToKeywords')
         };
 
         // Bind event listeners
@@ -122,6 +127,47 @@ class BridgeViewer {
 
         // Initialize word index panel state (start hidden)
         this.initializeWordIndexState();
+
+        // Initialize follow cursor button state
+        this.updateFollowCursorButton();
+    }
+
+    // Context Menu Methods
+    showContextMenu(x, y) {
+        const menu = this.elements.contextMenu;
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+        menu.classList.add('show');
+    }
+
+    hideContextMenu() {
+        this.elements.contextMenu.classList.remove('show');
+    }
+
+    addSelectionAsKeyword() {
+        if (this.selectedText) {
+            this.addKeyword(this.selectedText);
+            this.selectedText = null;
+            this.selectedLocation = null;
+        }
+    }
+
+    getLocationFromElement(element) {
+        // Walk up the DOM to find the transcript item with data attributes
+        let current = element;
+        while (current && current !== document.body) {
+            if (current.dataset && (current.dataset.page || current.dataset.line)) {
+                return {
+                    page: parseInt(current.dataset.page) || 0,
+                    line: parseInt(current.dataset.line) || 0,
+                    itemIndex: parseInt(current.dataset.itemIndex) || 0
+                };
+            }
+            current = current.parentElement;
+        }
+
+        // Fallback to current state
+        return this.getCurrentLocation();
     }
 
     bindEvents() {
@@ -209,6 +255,30 @@ class BridgeViewer {
             const transcript = this.elements.transcript;
             const isAtBottom = transcript.scrollHeight - transcript.clientHeight <= transcript.scrollTop + 10;
             this.autoScroll = isAtBottom;
+            this.updateFollowCursorButton();
+        });
+
+        // Follow cursor button
+        this.elements.followCursorBtn.addEventListener('click', () => {
+            this.toggleFollowCursor();
+        });
+
+        // Context menu handlers
+        this.elements.annotateText.addEventListener('click', () => {
+            this.hideContextMenu();
+            this.showAnnotationModal(this.selectedText, this.selectedLocation);
+        });
+
+        this.elements.addToKeywords.addEventListener('click', () => {
+            this.hideContextMenu();
+            this.addSelectionAsKeyword();
+        });
+
+        // Hide context menu when clicking elsewhere
+        document.addEventListener('click', (e) => {
+            if (!this.elements.contextMenu.contains(e.target)) {
+                this.hideContextMenu();
+            }
         });
 
         this.autoScroll = true;
@@ -585,6 +655,9 @@ class BridgeViewer {
         const item = document.createElement('div');
         item.className = this.getItemClass(data);
         item.dataset.itemId = data.timestamp || Date.now(); // Add unique identifier
+        item.dataset.page = data.page || 0; // Add page number for annotations
+        item.dataset.line = data.line || 0; // Add line number for annotations
+        item.dataset.itemIndex = this.transcriptData.length; // Add item index for navigation
 
         const meta = document.createElement('div');
         meta.className = 'item-meta';
@@ -1681,14 +1754,15 @@ class BridgeViewer {
         const text = this.elements.annotationText.value.trim();
         if (!text) return;
 
+        const location = this.selectedLocation || this.getCurrentLocation();
         const annotation = {
             id: Date.now(),
             text: text,
             selectedText: this.selectedText,
-            location: this.selectedLocation || this.getCurrentLocation(),
+            location: location,
             timestamp: new Date(),
-            page: this.getCurrentPage(),
-            line: this.getCurrentLine()
+            page: location.page || this.getCurrentPage(),
+            line: location.line || this.getCurrentLine()
         };
 
         this.annotations.push(annotation);
@@ -1835,14 +1909,20 @@ class BridgeViewer {
         const selection = window.getSelection();
         if (selection.rangeCount > 0 && selection.toString().trim()) {
             const selectedText = selection.toString().trim();
-            if (selectedText.length > 3) {
-                // Show context menu or automatically show annotation modal
-                // For now, we'll just store the selection
-                this.lastSelection = {
-                    text: selectedText,
-                    location: this.getCurrentLocation()
-                };
+            if (selectedText.length > 0) {
+                // Get the position to show context menu
+                const range = selection.getRangeAt(0);
+                const rect = range.getBoundingClientRect();
+
+                // Store the selection data
+                this.selectedText = selectedText;
+                this.selectedLocation = this.getLocationFromElement(range.startContainer);
+
+                // Show context menu near the selection
+                this.showContextMenu(rect.right + 10, rect.top + window.scrollY - 10);
             }
+        } else {
+            this.hideContextMenu();
         }
     }
 
@@ -2305,6 +2385,28 @@ class BridgeViewer {
         const b = Math.round((num & 0x0000FF) * (1 - percent));
 
         return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+    }
+
+    // Follow cursor functionality
+    toggleFollowCursor() {
+        this.autoScroll = !this.autoScroll;
+        this.updateFollowCursorButton();
+
+        // If enabling auto-scroll, scroll to bottom
+        if (this.autoScroll) {
+            this.elements.transcript.scrollTop = this.elements.transcript.scrollHeight;
+        }
+    }
+
+    updateFollowCursorButton() {
+        const btn = this.elements.followCursorBtn;
+        if (this.autoScroll) {
+            btn.classList.add('active');
+            btn.title = 'Auto-scroll is ON - Click to disable and scroll freely';
+        } else {
+            btn.classList.remove('active');
+            btn.title = 'Auto-scroll is OFF - Click to follow new text';
+        }
     }
 }
 

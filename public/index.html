@@ -203,6 +203,10 @@
                             <br><br>
                             Connect your Eclipse Bridge software to TCP port 8080 on this machine.
                         </div>
+                        <!-- Floating follow cursor button -->
+                        <button id="followCursorBtn" class="follow-cursor-btn active" title="Auto-scroll with new text">
+                            <span class="follow-cursor-icon">↓</span>
+                        </button>
                     </div>
                 </div>
             </main>
@@ -294,6 +298,12 @@
                 </div>
             </form>
         </div>
+    </div>
+
+    <!-- Context Menu for Text Selection -->
+    <div class="context-menu" id="contextMenu">
+        <button class="context-menu-item" id="annotateText">📝 Add Annotation</button>
+        <button class="context-menu-item" id="addToKeywords">🏷️ Add to Keywords</button>
     </div>
 
     <script src="app.js"></script>

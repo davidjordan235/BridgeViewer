@@ -467,6 +467,109 @@ body {
     animation: word-index-pulse 3s ease-in-out;
 }
 
+/* Follow cursor button */
+.follow-cursor-btn {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    border: 2px solid #007bff;
+    background: white;
+    color: #007bff;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: bold;
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+    transition: all 0.3s ease;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.follow-cursor-btn:hover {
+    background: #007bff;
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 123, 255, 0.4);
+}
+
+.follow-cursor-btn.active {
+    background: #007bff;
+    color: white;
+    animation: pulse-follow 2s infinite;
+}
+
+.follow-cursor-btn.active:hover {
+    background: #0056b3;
+}
+
+.follow-cursor-icon {
+    transition: transform 0.3s ease;
+}
+
+.follow-cursor-btn.active .follow-cursor-icon {
+    animation: bounce-arrow 1.5s infinite;
+}
+
+@keyframes pulse-follow {
+    0% { box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3); }
+    50% { box-shadow: 0 6px 20px rgba(0, 123, 255, 0.6); }
+    100% { box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3); }
+}
+
+@keyframes bounce-arrow {
+    0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-3px); }
+    60% { transform: translateY(-2px); }
+}
+
+/* Context Menu for Text Selection */
+.context-menu {
+    position: absolute;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    display: none;
+    min-width: 180px;
+    padding: 8px 0;
+}
+
+.context-menu.show {
+    display: block;
+}
+
+.context-menu-item {
+    width: 100%;
+    padding: 12px 16px;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 14px;
+    color: #333;
+    transition: background-color 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.context-menu-item:hover {
+    background: #f8f9fa;
+}
+
+.context-menu-item:first-child {
+    border-radius: 6px 6px 0 0;
+}
+
+.context-menu-item:last-child {
+    border-radius: 0 0 6px 6px;
+}
+
 .highlighted-line {
     border-radius: 4px !important;
     padding: 2px 4px !important;
